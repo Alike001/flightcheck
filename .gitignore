@@ -25,6 +25,10 @@ coverage/
 .flightcheck/
 playwright-report/
 test-results/
+contracts/lib/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
 
 # Local tooling and OS files
 .DS_Store

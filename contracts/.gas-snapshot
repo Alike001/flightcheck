@@ -1,0 +1,8 @@
+DeployFlightcheckRegistryTest:test_DeploysOnExplicitExpectedChain() (gas: 137371)
+DeployFlightcheckRegistryTest:test_RevertWhen_ChainIdDiffersFromExplicitExpectation() (gas: 9095)
+DeployFlightcheckRegistryTest:test_RevertWhen_DeployerPrivateKeyIsZero() (gas: 8455)
+FlightcheckRegistryTest:test_AnchorReportEmitsCanonicalEventAndPersistsState() (gas: 36946)
+FlightcheckRegistryTest:test_RevertWhen_ReportHashIsZero() (gas: 8484)
+FlightcheckRegistryTest:test_RevertWhen_RunnerAnchorsSameReportTwice() (gas: 35612)
+FlightcheckRegistryTest:test_SameReportHashCanBeAnchoredByDifferentRunners() (gas: 61228)
+FlightcheckRegistryTest:test_SameRunnerCanAnchorDifferentReports() (gas: 61183)
