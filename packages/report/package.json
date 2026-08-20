@@ -1,0 +1,28 @@
+{
+  "name": "@flightcheck/report",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist",
+    "schemas"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": "./schemas/flightcheck-report-v1.schema.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "schema:check": "pnpm build && node scripts/schema.mjs --check",
+    "schema:write": "pnpm build && node scripts/schema.mjs --write",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "ethers": "6.17.0",
+    "json-canonicalize": "3.0.0",
+    "zod": "4.4.3"
+  }
+}

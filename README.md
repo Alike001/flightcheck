@@ -46,13 +46,28 @@ Flightcheck verifies the declared 0G environment and its canonical protocol oper
 ## Planned workspace
 
 - `packages/cli`: `run`, `resume`, and `verify` commands published as `@alike001/flightcheck`.
-- `packages/report`: shared schema, canonicalization, hashing, signing, redaction, and deterministic state reduction.
+- `packages/report`: shared schema, canonicalization, hashing, signing, redaction, deterministic state reduction, and agent-readable command results.
 - `apps/web`: the landing page, report page, and versioned report API.
 - `apps/indexer`: idempotent and reorg-aware 0G mainnet event ingestion.
 - `contracts`: the immutable `FlightcheckRegistry` contract and Foundry tests.
 
+## Development checks
+
+The current report core requires Node.js 22 or later and pnpm 10.33.1.
+
+```bash
+pnpm install
+pnpm check
+pnpm schema:check
+pnpm test:coverage
+```
+
+The published report schema lives at `packages/report/schemas/flightcheck-report-v1.schema.json`. Runtime and published schema output are compared in tests, and the published document is independently exercised with a Draft 2020-12 validator.
+
+Machine-facing commands will use versioned JSON envelopes, stable error identifiers, and documented exit codes. JSON output never grants permission to spend. Non-interactive funded operations must provide explicit permissions and enforceable spending limits.
+
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. Implementation begins with the deterministic report core and its fixed verification fixtures.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core and fixed verification fixtures are the first implementation slice. Network adapters, the registry contract, indexer, CLI commands, and public pages follow as separate tested issues.
 
 Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1). Each meaningful feature will have a focused issue and tests before the next feature starts.

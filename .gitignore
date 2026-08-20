@@ -17,6 +17,7 @@ log.md
 
 # Dependencies and generated output
 node_modules/
+.cache/
 dist/
 build/
 coverage/
