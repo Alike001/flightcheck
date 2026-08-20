@@ -1,8 +1,10 @@
 # Flightcheck CLI
 
 The current `run` command checks whether a TypeScript 0G project is ready for
-live Chain, Storage, and Direct Compute probes. It makes no network request and
-spends no funds in this implementation slice.
+live Storage and Direct Compute probes. It validates the project setup, reads
+the real project and anchor RPC chain IDs, and proves local control of the
+configured runner through an EIP-712 signature round trip. It broadcasts no
+transaction and spends no funds in this implementation slice.
 
 ## Required project config
 
@@ -56,10 +58,13 @@ pnpm build
 node packages/cli/dist/bin.js run --cwd /path/to/project --json
 ```
 
-A valid project returns `READY_FOR_LIVE_PROBES` with exit code `4`. The pending
-exit is intentional because live proof has not run yet. Invalid setup returns
-`CONFIG_ERROR` with exit code `2`. JSON mode writes exactly one result envelope
-to standard output, and it never includes an environment value.
+A valid project with matching project and anchor RPCs returns
+`READY_FOR_STORAGE` with exit code `4`. The pending exit is intentional because
+Storage, Compute, and mainnet anchor proof have not run yet. Invalid setup
+returns `CONFIG_ERROR` with exit code `2`, a known chain mismatch returns
+`VERIFICATION_FAILED` with exit code `3`, and RPC unavailability returns
+`PENDING` with exit code `4`. JSON mode writes exactly one result envelope to
+standard output, and it never includes an endpoint, private key, or signature.
 
 The future published command is `npx @alike001/flightcheck run --json`. The
 package has not been published yet, so use the local command above for now.

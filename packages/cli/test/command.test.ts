@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { executeCli } from "../src/index.js";
+import { executeCli, runPreflight } from "../src/index.js";
 import {
   TEST_SECRET,
   VALID_ENVIRONMENT,
@@ -68,6 +68,35 @@ describe("CLI command boundary", () => {
     }
   });
 
+  it("never mislabels a runtime TypeError as invalid CLI syntax", async () => {
+    const internalSecret = "runtime-secret-must-not-leak";
+    let stdout = "";
+
+    const exitCode = await executeCli(
+      ["run", "--json"],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => undefined,
+      },
+      {
+        run: async () => {
+          throw new TypeError(internalSecret);
+        },
+      },
+    );
+    const parsed = JSON.parse(stdout) as {
+      status: string;
+      errors: { code: string }[];
+    };
+
+    expect(exitCode).toBe(5);
+    expect(parsed.status).toBe("INTERNAL_ERROR");
+    expect(parsed.errors[0]?.code).toBe("CLI_INTERNAL_ERROR");
+    expect(stdout).not.toContain(internalSecret);
+  });
+
   it("reserves resume and verify until their scoped issues are implemented", async () => {
     for (const command of ["resume", "verify"] as const) {
       let stdout = "";
@@ -113,12 +142,16 @@ describe("CLI command boundary", () => {
     }
     let stderr = "";
 
-    const exitCode = await executeCli(["run", "--cwd", directory], {
-      stdout: () => undefined,
-      stderr: (text) => {
-        stderr += text;
+    const exitCode = await executeCli(
+      ["run", "--cwd", directory],
+      {
+        stdout: () => undefined,
+        stderr: (text) => {
+          stderr += text;
+        },
       },
-    });
+      { run: runPreflight },
+    );
 
     expect(exitCode).toBe(4);
     expect(stderr).toContain("Preflight passed.");
@@ -163,7 +196,7 @@ describe("CLI command boundary", () => {
       stderr: string;
     }>((resolveProcess, rejectProcess) => {
       const child = spawn(process.execPath, [executable, "run", "--cwd", directory, "--json"], {
-        env: { ...process.env, ...VALID_ENVIRONMENT },
+        env: { ...process.env },
       });
       let stdout = "";
       let stderr = "";
@@ -181,14 +214,14 @@ describe("CLI command boundary", () => {
       });
     });
 
-    expect(processResult.exitCode).toBe(4);
+    expect(processResult.exitCode).toBe(2);
     expect(processResult.stderr).toBe("");
     expect(() => JSON.parse(processResult.stdout)).not.toThrow();
     expect(processResult.stdout).not.toContain(TEST_SECRET);
     expect(JSON.parse(processResult.stdout)).toMatchObject({
       command: "run",
-      status: "PENDING",
-      data: { state: "READY_FOR_LIVE_PROBES" },
+      status: "CONFIG_ERROR",
+      data: { state: "BLOCKED" },
     });
   });
 });
