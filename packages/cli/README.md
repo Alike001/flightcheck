@@ -3,8 +3,9 @@
 The current `run` command checks whether a TypeScript 0G project is ready for
 live Storage and Direct Compute probes. It validates the project setup, reads
 the real project and anchor RPC chain IDs, and proves local control of the
-configured runner through an EIP-712 signature round trip. It broadcasts no
-transaction and spends no funds in this implementation slice.
+configured runner through an EIP-712 signature round trip. It then persists a
+secret-free nonce canary and obtains a read-only, expiring Storage quote. It
+broadcasts no transaction and spends no funds in this implementation slice.
 
 ## Required project config
 
@@ -58,13 +59,22 @@ pnpm build
 node packages/cli/dist/bin.js run --cwd /path/to/project --json
 ```
 
-A valid project with matching project and anchor RPCs returns
-`READY_FOR_STORAGE` with exit code `4`. The pending exit is intentional because
-Storage, Compute, and mainnet anchor proof have not run yet. Invalid setup
+A valid project with matching Chain RPCs and a complete Storage quote returns
+`APPROVAL_REQUIRED` with exit code `4`. The result includes storage fee, gas
+price, gas limit, nonce, quote expiry, and the exact maximum spend in wei. The
+resumable state is written with private permissions to
+`.flightcheck/runs/<runId>.json`. The pending exit is intentional because no
+upload has been authorized and Storage, Compute, and mainnet anchor proof have
+not run yet. Invalid setup
 returns `CONFIG_ERROR` with exit code `2`, a known chain mismatch returns
 `VERIFICATION_FAILED` with exit code `3`, and RPC unavailability returns
 `PENDING` with exit code `4`. JSON mode writes exactly one result envelope to
 standard output, and it never includes an endpoint, private key, or signature.
+
+The published 0G Storage SDK's `proof` download flag is not treated as verified
+evidence because version 1.2.11 does not implement that check. Flightcheck will
+request it, then independently recompute the downloaded Merkle root and compare
+the exact canary bytes before a later Storage result can become `PASS`.
 
 The future published command is `npx @alike001/flightcheck run --json`. The
 package has not been published yet, so use the local command above for now.

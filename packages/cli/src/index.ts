@@ -4,3 +4,4 @@ export * from "./config.js";
 export * from "./package-inspection.js";
 export * from "./preflight.js";
 export * from "./run.js";
+export * from "./storage.js";

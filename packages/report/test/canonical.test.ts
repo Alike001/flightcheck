@@ -17,7 +17,7 @@ const VERIFIED_FIXTURE = JSON.parse(
   readFileSync(VERIFIED_FIXTURE_PATH, "utf8"),
 ) as unknown;
 const VERIFIED_FIXTURE_HASH =
-  "0x70e70bde315d0738c32a3373fbbb0a28209e6d6b20fca619bc6e42c5b213abaf";
+  "0x55acffcbdbbf8e0f9864cb2d50f0c21ef09369b8b981807df405b066ec1d577a";
 
 describe("canonical report payload", () => {
   it("matches the fixed cross-runtime JSON fixture and hash", () => {

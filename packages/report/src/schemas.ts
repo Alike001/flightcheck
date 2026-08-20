@@ -109,8 +109,10 @@ export const StorageCheckSchema = z
     ...BaseCheckShape,
     state: z.enum(STORAGE_STATES),
     rootHash: Hex32Schema.optional(),
+    downloadRootHash: Hex32Schema.optional(),
     transactionHash: TransactionHashSchema.optional(),
-    proofVerified: z.boolean().optional(),
+    integrityMethod: z.literal("RECOMPUTED_MERKLE_ROOT").optional(),
+    rootMatched: z.boolean().optional(),
     bytesMatched: z.boolean().optional(),
     retrievalReference: z.string().min(1).max(2_048).optional(),
   })
@@ -118,13 +120,15 @@ export const StorageCheckSchema = z
     if (
       check.state === "PASS" &&
       (!check.rootHash ||
+        !check.downloadRootHash ||
         !check.transactionHash ||
-        check.proofVerified !== true ||
+        check.integrityMethod !== "RECOMPUTED_MERKLE_ROOT" ||
+        check.rootMatched !== true ||
         check.bytesMatched !== true)
     ) {
       context.addIssue({
         code: "custom",
-        message: "Storage PASS requires root, transaction, proof, and byte-match evidence",
+        message: "Storage PASS requires upload root, transaction, recomputed download root, root-match, and byte-match evidence",
       });
     }
   });

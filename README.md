@@ -11,7 +11,7 @@ Cross-layer 0G integrations can fail silently. Flightcheck catches the exact bro
 ## What Flightcheck verifies
 
 - Chain: confirms the declared 0G network and runner, then anchors the final report hash through `FlightcheckRegistry` on 0G mainnet.
-- Storage: uploads a harmless Merkle-rooted canary, waits for availability, downloads it with proof verification, and compares the returned bytes.
+- Storage: uploads a harmless Merkle-rooted canary, waits for availability, downloads it, independently recomputes its Merkle root, and compares the returned bytes.
 - Direct Compute: sends one nonce-bearing inference request and preserves the SDK's exact `VERIFIED`, `UNVERIFIED`, or `INVALID` result.
 - Report integrity: canonicalizes sanitized evidence, hashes it with `keccak256`, signs it with EIP-712, and publishes a no-secret verification path.
 
@@ -45,7 +45,7 @@ Flightcheck verifies the declared 0G environment and its canonical protocol oper
 
 ## Workspace
 
-- `packages/cli`: deterministic project preflight through `run`, with `resume` and `verify` reserved for their later implementation slices.
+- `packages/cli`: deterministic project and Chain preflight plus resumable Storage canary preparation and a read-only spend quote through `run`. Funded upload, `resume`, and `verify` follow in later slices.
 - `packages/report`: shared schema, canonicalization, hashing, signing, redaction, deterministic state reduction, and agent-readable command results.
 - `apps/web`: the landing page, report page, and versioned report API.
 - `apps/indexer`: idempotent and reorg-aware 0G mainnet event ingestion.
@@ -74,15 +74,18 @@ The CLI in `packages/cli/` validates Node.js, the project config, a lockfile,
 current and legacy 0G SDK packages, declared 0G networks, endpoint shapes, and
 required environment names. It then reads the configured project and anchor RPC
 chain IDs and proves local control of the runner with an EIP-712 signature round
-trip. This read-only Chain stage sends no transaction and spends no funds. A
-passing run stops at `READY_FOR_STORAGE` because Storage, Compute, and mainnet
-anchor proof remain pending. See `packages/cli/README.md` for the config shape
-and local command.
+trip. It then creates a secret-free nonce canary, persists its 0G Merkle root in
+`.flightcheck/runs/`, selects trusted Storage coverage, verifies the Storage
+node's chain identity, and derives an expiring maximum upload spend from the
+Flow and market contracts. These stages send no transaction and spend no funds.
+A complete quote stops at `APPROVAL_REQUIRED`. Storage upload, Compute, and
+mainnet anchor proof remain pending. See `packages/cli/README.md` for the config
+shape and local command.
 
 Machine-facing commands will use versioned JSON envelopes, stable error identifiers, and documented exit codes. JSON output never grants permission to spend. Non-interactive funded operations must provide explicit permissions and enforceable spending limits.
 
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, and no-spend CLI preflight are merged. The read-only Chain RPC and signer stage is implemented and under verification. Storage and Compute adapters, the indexer, and public pages follow as separate tested issues.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, and read-only Chain stage are merged. The resumable Storage canary and read-only quote are implemented on issue #10. Funded Storage upload and retrieval, Compute, the indexer, and public pages remain.
 
-Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), and live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8). Each meaningful feature has a focused issue and tests before the next feature starts.
+Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), and the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10). Each meaningful feature has a focused issue and tests before the next feature starts.

@@ -30,13 +30,13 @@
       "$ref": "#/$defs/__schema9"
     },
     "overallState": {
-      "$ref": "#/$defs/__schema24"
+      "$ref": "#/$defs/__schema26"
     },
     "outcomeBitmap": {
-      "$ref": "#/$defs/__schema25"
+      "$ref": "#/$defs/__schema27"
     },
     "errors": {
-      "$ref": "#/$defs/__schema26"
+      "$ref": "#/$defs/__schema28"
     }
   },
   "required": [
@@ -309,17 +309,23 @@
             "rootHash": {
               "$ref": "#/$defs/__schema14"
             },
-            "transactionHash": {
+            "downloadRootHash": {
               "$ref": "#/$defs/__schema15"
             },
-            "proofVerified": {
+            "transactionHash": {
               "$ref": "#/$defs/__schema16"
             },
-            "bytesMatched": {
+            "integrityMethod": {
               "$ref": "#/$defs/__schema17"
             },
-            "retrievalReference": {
+            "rootMatched": {
               "$ref": "#/$defs/__schema18"
+            },
+            "bytesMatched": {
+              "$ref": "#/$defs/__schema19"
+            },
+            "retrievalReference": {
+              "$ref": "#/$defs/__schema20"
             }
           },
           "required": [
@@ -339,19 +345,19 @@
               "$ref": "#/$defs/__schema11"
             },
             "state": {
-              "$ref": "#/$defs/__schema19"
-            },
-            "providerAddress": {
-              "$ref": "#/$defs/__schema20"
-            },
-            "responseId": {
               "$ref": "#/$defs/__schema21"
             },
-            "nonceCommitment": {
+            "providerAddress": {
               "$ref": "#/$defs/__schema22"
             },
-            "verificationResult": {
+            "responseId": {
               "$ref": "#/$defs/__schema23"
+            },
+            "nonceCommitment": {
+              "$ref": "#/$defs/__schema24"
+            },
+            "verificationResult": {
+              "$ref": "#/$defs/__schema25"
             }
           },
           "required": [
@@ -437,21 +443,28 @@
       "$ref": "#/$defs/__schema6"
     },
     "__schema15": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "__schema16": {
       "type": "string",
       "pattern": "^0x[0-9a-f]{64}$"
     },
-    "__schema16": {
-      "type": "boolean"
-    },
     "__schema17": {
-      "type": "boolean"
+      "type": "string",
+      "const": "RECOMPUTED_MERKLE_ROOT"
     },
     "__schema18": {
+      "type": "boolean"
+    },
+    "__schema19": {
+      "type": "boolean"
+    },
+    "__schema20": {
       "type": "string",
       "minLength": 1,
       "maxLength": 2048
     },
-    "__schema19": {
+    "__schema21": {
       "type": "string",
       "enum": [
         "NOT_RUN",
@@ -463,18 +476,18 @@
         "FAIL"
       ]
     },
-    "__schema20": {
+    "__schema22": {
       "$ref": "#/$defs/__schema3"
     },
-    "__schema21": {
+    "__schema23": {
       "type": "string",
       "minLength": 1,
       "maxLength": 512
     },
-    "__schema22": {
+    "__schema24": {
       "$ref": "#/$defs/__schema6"
     },
-    "__schema23": {
+    "__schema25": {
       "anyOf": [
         {
           "type": "boolean"
@@ -484,7 +497,7 @@
         }
       ]
     },
-    "__schema24": {
+    "__schema26": {
       "type": "string",
       "enum": [
         "VERIFIED",
@@ -494,12 +507,12 @@
         "FAIL"
       ]
     },
-    "__schema25": {
+    "__schema27": {
       "type": "integer",
       "minimum": 0,
       "maximum": 31
     },
-    "__schema26": {
+    "__schema28": {
       "maxItems": 64,
       "type": "array",
       "items": {

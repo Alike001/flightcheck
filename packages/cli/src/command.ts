@@ -108,6 +108,8 @@ function formatHuman(result: CommandResult): string {
       lines.push("Preflight passed. Live Storage, Compute, and mainnet anchor operations require explicit approval and may spend funds.");
     } else if (result.data.state === "READY_FOR_STORAGE") {
       lines.push("Chain preflight passed. Storage, Compute, and mainnet anchor operations still require explicit approval and may spend funds.");
+    } else if (result.data.state === "APPROVAL_REQUIRED") {
+      lines.push("Storage quote prepared. Review the maximum spend and explicitly approve the Storage round trip before any transaction is sent.");
     }
   } else {
     for (const error of result.errors) {
