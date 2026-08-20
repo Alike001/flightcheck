@@ -195,6 +195,23 @@ describe("deterministic project preflight", () => {
     expect(JSON.stringify(result)).not.toContain(badKey);
   });
 
+  it("rejects the zero private key before live work", async () => {
+    const directory = await createProjectFixture();
+    const zeroKey = `0x${"0".repeat(64)}`;
+
+    const result = await runPreflight({
+      projectDirectory: directory,
+      environment: {
+        ...VALID_ENVIRONMENT,
+        TEST_RUNNER_PRIVATE_KEY: zeroKey,
+      },
+      nodeVersion: "v22.1.0",
+    });
+
+    expect(errorCodes(result)).toContain("PREFLIGHT_PRIVATE_KEY_INVALID");
+    expect(JSON.stringify(result)).not.toContain(zeroKey);
+  });
+
   it("rejects unsupported or malformed Node.js versions", async () => {
     const directory = await createProjectFixture();
 

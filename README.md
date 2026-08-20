@@ -70,16 +70,19 @@ runner and report-hash identity needed for duplicate prevention and emits the
 outcome bitmap as public evidence. See `contracts/README.md` for its exact trust
 boundary and local test commands.
 
-The first CLI slice is implemented in `packages/cli/`. It validates Node.js,
-the project config, a lockfile, current and legacy 0G SDK packages, declared 0G
-networks, endpoint shapes, and required environment names. It then stops at
-`READY_FOR_LIVE_PROBES` before any RPC request or funded operation. See
-`packages/cli/README.md` for the config shape and local command.
+The CLI in `packages/cli/` validates Node.js, the project config, a lockfile,
+current and legacy 0G SDK packages, declared 0G networks, endpoint shapes, and
+required environment names. It then reads the configured project and anchor RPC
+chain IDs and proves local control of the runner with an EIP-712 signature round
+trip. This read-only Chain stage sends no transaction and spends no funds. A
+passing run stops at `READY_FOR_STORAGE` because Storage, Compute, and mainnet
+anchor proof remain pending. See `packages/cli/README.md` for the config shape
+and local command.
 
 Machine-facing commands will use versioned JSON envelopes, stable error identifiers, and documented exit codes. JSON output never grants permission to spend. Non-interactive funded operations must provide explicit permissions and enforceable spending limits.
 
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core and registry contract are merged. The no-spend CLI preflight is implemented and under verification. Live Chain, Storage, and Compute adapters, the indexer, and public pages follow as separate tested issues.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, and no-spend CLI preflight are merged. The read-only Chain RPC and signer stage is implemented and under verification. Storage and Compute adapters, the indexer, and public pages follow as separate tested issues.
 
-Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), and CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6). Each meaningful feature has a focused issue and tests before the next feature starts.
+Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), and live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8). Each meaningful feature has a focused issue and tests before the next feature starts.

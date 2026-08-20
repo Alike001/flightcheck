@@ -57,6 +57,21 @@ export interface PreflightInput {
   nodeVersion?: string;
 }
 
+export interface ReadyPreflightContext {
+  projectDirectory: string;
+  projectName: string;
+  config: FlightcheckConfig;
+  privateKey: string;
+  projectRpcUrl: string;
+  anchorRpcUrl: string;
+  preflightData: PreflightData;
+}
+
+export interface PreflightEvaluation {
+  result: CommandResult;
+  context?: ReadyPreflightContext;
+}
+
 interface MutablePreflight {
   checks: CheckResult[];
   errors: StructuredError[];
@@ -264,11 +279,14 @@ function checkEnvironment(
       continue;
     }
 
-    if (field === "runnerPrivateKey" && !/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    if (
+      field === "runnerPrivateKey" &&
+      (!/^0x[0-9a-fA-F]{64}$/.test(value) || /^0x0{64}$/i.test(value))
+    ) {
       addFailure(
         output,
         "PREFLIGHT_PRIVATE_KEY_INVALID",
-        `Environment variable ${variableName} must contain a 32-byte hex private key.`,
+        `Environment variable ${variableName} must contain a nonzero 32-byte hex private key.`,
       );
       continue;
     }
@@ -277,7 +295,7 @@ function checkEnvironment(
   }
 }
 
-const LIVE_OPERATIONS: PreflightData["liveOperations"] = [
+export const LIVE_OPERATIONS: PreflightData["liveOperations"] = [
   {
     id: "storage_round_trip",
     description: "Upload and retrieve one nonce-bearing canary through 0G Storage.",
@@ -295,7 +313,9 @@ const LIVE_OPERATIONS: PreflightData["liveOperations"] = [
   },
 ];
 
-export async function runPreflight(input: PreflightInput = {}): Promise<CommandResult> {
+export async function evaluatePreflight(
+  input: PreflightInput = {},
+): Promise<PreflightEvaluation> {
   const projectDirectory = resolve(input.projectDirectory ?? process.cwd());
   const environment = input.environment ?? process.env;
   const output: MutablePreflight = { checks: [], errors: [] };
@@ -322,7 +342,7 @@ export async function runPreflight(input: PreflightInput = {}): Promise<CommandR
     confirmationRequired: true,
   };
 
-  return {
+  const result: CommandResult = {
     schemaVersion: "1.0.0",
     command: "run",
     status: blocked ? "CONFIG_ERROR" : "PENDING",
@@ -330,4 +350,32 @@ export async function runPreflight(input: PreflightInput = {}): Promise<CommandR
     data: PreflightDataSchema.parse(data),
     errors: output.errors,
   };
+
+  if (blocked || !config) {
+    return { result };
+  }
+
+  const projectRpcUrl = environment[config.environment.projectRpcUrl];
+  const anchorRpcUrl = environment[config.environment.anchorRpcUrl];
+  const privateKey = environment[config.environment.runnerPrivateKey];
+  if (!projectRpcUrl || !anchorRpcUrl || !privateKey) {
+    return { result };
+  }
+
+  return {
+    result,
+    context: {
+      projectDirectory,
+      projectName: data.projectName,
+      config,
+      privateKey,
+      projectRpcUrl,
+      anchorRpcUrl,
+      preflightData: data,
+    },
+  };
+}
+
+export async function runPreflight(input: PreflightInput = {}): Promise<CommandResult> {
+  return (await evaluatePreflight(input)).result;
 }
