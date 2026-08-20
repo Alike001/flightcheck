@@ -43,9 +43,9 @@ Only the report hash, runner, outcome bitmap, timestamp, and duplicate-preventio
 
 Flightcheck verifies the declared 0G environment and its canonical protocol operations. It does not certify application business logic, security, or production readiness.
 
-## Planned workspace
+## Workspace
 
-- `packages/cli`: `run`, `resume`, and `verify` commands published as `@alike001/flightcheck`.
+- `packages/cli`: deterministic project preflight through `run`, with `resume` and `verify` reserved for their later implementation slices.
 - `packages/report`: shared schema, canonicalization, hashing, signing, redaction, deterministic state reduction, and agent-readable command results.
 - `apps/web`: the landing page, report page, and versioned report API.
 - `apps/indexer`: idempotent and reorg-aware 0G mainnet event ingestion.
@@ -70,10 +70,16 @@ runner and report-hash identity needed for duplicate prevention and emits the
 outcome bitmap as public evidence. See `contracts/README.md` for its exact trust
 boundary and local test commands.
 
+The first CLI slice is implemented in `packages/cli/`. It validates Node.js,
+the project config, a lockfile, current and legacy 0G SDK packages, declared 0G
+networks, endpoint shapes, and required environment names. It then stops at
+`READY_FOR_LIVE_PROBES` before any RPC request or funded operation. See
+`packages/cli/README.md` for the config shape and local command.
+
 Machine-facing commands will use versioned JSON envelopes, stable error identifiers, and documented exit codes. JSON output never grants permission to spend. Non-interactive funded operations must provide explicit permissions and enforceable spending limits.
 
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core is merged, and the registry contract is the current implementation slice. Network adapters, the indexer, CLI commands, and public pages follow as separate tested issues.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core and registry contract are merged. The no-spend CLI preflight is implemented and under verification. Live Chain, Storage, and Compute adapters, the indexer, and public pages follow as separate tested issues.
 
-Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), and the registry implementation is tracked in [issue #4](https://github.com/Alike001/flightcheck/issues/4). Each meaningful feature has a focused issue and tests before the next feature starts.
+Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), and CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6). Each meaningful feature has a focused issue and tests before the next feature starts.
