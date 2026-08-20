@@ -1,0 +1,30 @@
+# Private project operating documents
+AGENTS.md
+PROMPTS.md
+design.doc.md
+research-intake.md
+architecture.md
+PRD.md
+handoff.md
+log.md
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.flightcheck/
+playwright-report/
+test-results/
+
+# Local tooling and OS files
+.DS_Store
+*.log
