@@ -18,11 +18,14 @@ import {
   quoteStorageUpload,
   readStorageRunState,
   requestStorageJsonRpc,
+  resumeStorageRoundTrip,
   runStoragePreparation,
   storageRunStatePath,
   writeStorageRunState,
+  StorageWorkerFailure,
   type ReadyPreflightContext,
   type StorageQuote,
+  type StorageResumeInput,
   type StorageRunState,
 } from "../src/index.js";
 import {
@@ -252,6 +255,432 @@ describe("0G Storage canary preparation", () => {
     expect(
       (await readStorageRunState(storageRunStatePath(context.projectDirectory, RUN_ID))).state,
     ).toBe("BLOCKED");
+  });
+});
+
+describe("authorized resumable 0G Storage round trip", () => {
+  async function persistApprovalRequired(
+    context: ReadyPreflightContext,
+  ): Promise<StorageRunState> {
+    const prepared = await preparedState(context);
+    const state: StorageRunState = {
+      ...prepared,
+      state: "APPROVAL_REQUIRED",
+      quote: fixedQuote(prepared.canary.rootHash),
+    };
+    await writeStorageRunState(context.projectDirectory, state);
+    return state;
+  }
+
+  const authorization: StorageResumeInput = {
+    runId: RUN_ID,
+    allowedOperations: ["storage_round_trip"],
+    maximumSpendWei: "50500",
+  };
+
+  it("refuses to dispatch without both explicit operation permission and a sufficient limit", async () => {
+    const context = await readyContext();
+    await persistApprovalRequired(context);
+    const upload = vi.fn();
+
+    const missingPermission = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+      maximumSpendWei: "50500",
+    }, { upload, now: () => new Date(QUOTED_AT) });
+    expect(missingPermission).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_OPERATION_NOT_AUTHORIZED" }],
+    });
+
+    const missingLimit = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: ["storage_round_trip"],
+    }, { upload, now: () => new Date(QUOTED_AT) });
+    expect(missingLimit).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_MAXIMUM_SPEND_REQUIRED" }],
+    });
+
+    const lowLimit = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: ["storage_round_trip"],
+      maximumSpendWei: "50499",
+    }, { upload, now: () => new Date(QUOTED_AT) });
+    expect(lowLimit).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_MAXIMUM_SPEND_TOO_LOW" }],
+    });
+    expect(upload).not.toHaveBeenCalled();
+    expect(
+      (await readStorageRunState(storageRunStatePath(context.projectDirectory, RUN_ID))).state,
+    ).toBe("APPROVAL_REQUIRED");
+  });
+
+  it("passes the exact approved fee, nonce, gas price, and gas limit into one upload", async () => {
+    const context = await readyContext();
+    const initial = await persistApprovalRequired(context);
+    const upload = vi.fn(async (_input, _timeout, onTransaction) => {
+      await onTransaction(`0x${"8".repeat(64)}`);
+      return {
+        rootHash: initial.canary.rootHash,
+        txHash: `0x${"8".repeat(64)}`,
+        txSeq: 19,
+        reusedExisting: false,
+      };
+    });
+    const download = vi.fn(async () => ({
+      bytes: Uint8Array.from(Buffer.from(initial.canary.bytesBase64, "base64")),
+      sdkProofRequested: true as const,
+    }));
+
+    const result = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      download,
+      now: () => new Date(QUOTED_AT),
+      sleep: async () => undefined,
+    });
+
+    expect(result).toMatchObject({
+      command: "resume",
+      status: "SUCCESS",
+      exitCode: 0,
+      data: {
+        state: "PASS",
+        storage: {
+          txHash: `0x${"8".repeat(64)}`,
+          txSeq: 19,
+          sdkProofRequested: true,
+          downloadedRootHash: initial.canary.rootHash,
+          bytesMatch: true,
+        },
+      },
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[0]).toMatchObject({
+      storageFeeWei: "100",
+      gasPriceWei: "2",
+      gasLimit: "25200",
+      nonce: 7,
+      expectedFlowAddress: FLOW_ADDRESS,
+      expectedRootHash: initial.canary.rootHash,
+    });
+    expect(download).toHaveBeenCalledTimes(1);
+    const persisted = await readStorageRunState(
+      storageRunStatePath(context.projectDirectory, RUN_ID),
+    );
+    expect(persisted.state).toBe("COMPLETE");
+    expect(persisted.authorization?.maximumSpendWei).toBe("50500");
+    expect(JSON.stringify(result)).not.toContain(TEST_SECRET);
+
+    const repeated = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+    }, { upload, download, now: () => new Date(QUOTED_AT) });
+    expect(repeated).toMatchObject({
+      status: "SUCCESS",
+      data: { checks: [{ code: "STORAGE_ROUND_TRIP_ALREADY_VERIFIED" }] },
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it("records an observed transaction before returning a worker failure and never uploads again", async () => {
+    const context = await readyContext();
+    const initial = await persistApprovalRequired(context);
+    const txHash = `0x${"9".repeat(64)}`;
+    const upload = vi.fn(async (_input, _timeout, onTransaction) => {
+      await onTransaction(txHash);
+      throw new StorageWorkerFailure("STORAGE_WORKER_TIMEOUT", txHash);
+    });
+
+    const first = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(first).toMatchObject({
+      status: "PENDING",
+      data: { state: "UPLOAD_PENDING", storage: { txHash } },
+      errors: [{ code: "STORAGE_WORKER_TIMEOUT" }],
+    });
+    expect(
+      (await readStorageRunState(storageRunStatePath(context.projectDirectory, RUN_ID))).state,
+    ).toBe("UPLOAD_SUBMITTED");
+
+    const download = vi.fn(async () => ({
+      bytes: Uint8Array.from(Buffer.from(initial.canary.bytesBase64, "base64")),
+      sdkProofRequested: true as const,
+    }));
+    const second = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+    }, {
+      upload,
+      download,
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(second.status).toBe("SUCCESS");
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks automatic retry when dispatch could have happened without a recorded hash", async () => {
+    const context = await readyContext();
+    await persistApprovalRequired(context);
+    const upload = vi.fn(async () => {
+      throw new StorageWorkerFailure("STORAGE_WORKER_TIMEOUT");
+    });
+
+    const first = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(first).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_TX_UNKNOWN_AFTER_DISPATCH", retryable: false }],
+    });
+
+    const second = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(second).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_TX_UNKNOWN_AFTER_DISPATCH", retryable: false }],
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires a fresh quote after a known pre-dispatch nonce change", async () => {
+    const context = await readyContext();
+    await persistApprovalRequired(context);
+    const upload = vi.fn(async () => {
+      throw new StorageWorkerFailure("STORAGE_NONCE_CHANGED");
+    });
+
+    const result = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(result).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_NONCE_CHANGED", retryable: true }],
+    });
+    const persisted = await readStorageRunState(
+      storageRunStatePath(context.projectDirectory, RUN_ID),
+    );
+    expect(persisted.state).toBe("QUOTE_UNAVAILABLE");
+    expect(persisted.quote).toBeUndefined();
+
+    const refreshed = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      quote: async (_context, current) => fixedQuote(current.canary.rootHash),
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(refreshed).toMatchObject({
+      status: "PENDING",
+      data: { state: "APPROVAL_REQUIRED", storage: { quote: { nonce: 7 } } },
+      errors: [],
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps delayed availability bounded and resumes the same root without another upload", async () => {
+    const context = await readyContext();
+    const initial = await persistApprovalRequired(context);
+    const upload = vi.fn(async () => ({
+      rootHash: initial.canary.rootHash,
+      txHash: `0x${"a".repeat(64)}`,
+      txSeq: 20,
+      reusedExisting: false,
+    }));
+    const unavailableDownload = vi.fn(async () => {
+      throw new StorageWorkerFailure("STORAGE_NOT_RETRIEVABLE");
+    });
+    const first = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      download: unavailableDownload,
+      now: () => new Date(QUOTED_AT),
+      sleep: async () => undefined,
+      availabilityAttempts: 2,
+    });
+    expect(first).toMatchObject({
+      status: "PENDING",
+      data: { state: "AVAILABILITY_PENDING" },
+      errors: [{ code: "STORAGE_NOT_RETRIEVABLE_YET", retryable: true }],
+    });
+    expect(unavailableDownload).toHaveBeenCalledTimes(2);
+
+    const availableDownload = vi.fn(async () => ({
+      bytes: Uint8Array.from(Buffer.from(initial.canary.bytesBase64, "base64")),
+      sdkProofRequested: true as const,
+    }));
+    const second = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+    }, {
+      upload,
+      download: availableDownload,
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(second.status).toBe("SUCCESS");
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(availableDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails deterministic verification when downloaded bytes or their root differ", async () => {
+    const context = await readyContext();
+    const initial = await persistApprovalRequired(context);
+    const upload = vi.fn(async () => ({
+      rootHash: initial.canary.rootHash,
+      txHash: "",
+      txSeq: 21,
+      reusedExisting: true,
+    }));
+    const result = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      download: async () => ({
+        bytes: new TextEncoder().encode("modified canary\n"),
+        sdkProofRequested: true,
+      }),
+      now: () => new Date(QUOTED_AT),
+    });
+
+    expect(result).toMatchObject({
+      status: "VERIFICATION_FAILED",
+      data: { state: "BLOCKED", storage: { bytesMatch: false } },
+      errors: [{ code: "STORAGE_DOWNLOADED_ROOT_MISMATCH" }],
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes an expired quote without spending and rejects an internally inconsistent quote", async () => {
+    const context = await readyContext();
+    const state = await persistApprovalRequired(context);
+    const upload = vi.fn();
+    const expired = await resumeStorageRoundTrip(context, authorization, {
+      upload,
+      quote: async (_context, current) => ({
+        ...fixedQuote(current.canary.rootHash),
+        quotedAt: "2026-08-20T16:05:00.000Z",
+        expiresAt: "2026-08-20T16:10:00.000Z",
+      }),
+      now: () => new Date("2026-08-20T16:05:00.000Z"),
+    });
+    expect(expired).toMatchObject({
+      status: "PENDING",
+      data: {
+        state: "APPROVAL_REQUIRED",
+        storage: { quote: { expiresAt: "2026-08-20T16:10:00.000Z" } },
+      },
+      errors: [],
+    });
+    expect(upload).not.toHaveBeenCalled();
+
+    await writeStorageRunState(context.projectDirectory, {
+      ...state,
+      quote: { ...state.quote!, maximumSpendWei: "1" },
+    });
+    const invalid = await resumeStorageRoundTrip(context, {
+      ...authorization,
+      maximumSpendWei: "999999",
+    }, {
+      upload,
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(invalid.errors[0]?.code).toBe("STORAGE_QUOTE_INVALID");
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("blocks mismatched run context, tampered canary state, and interrupted dispatch state", async () => {
+    const context = await readyContext();
+    const initial = await persistApprovalRequired(context);
+
+    await writeStorageRunState(context.projectDirectory, {
+      ...initial,
+      projectName: "another-project",
+    });
+    const contextMismatch = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+    });
+    expect(contextMismatch).toMatchObject({
+      status: "VERIFICATION_FAILED",
+      errors: [{ code: "STORAGE_RUN_CONTEXT_MISMATCH" }],
+    });
+
+    await writeStorageRunState(context.projectDirectory, {
+      ...initial,
+      canary: { ...initial.canary, byteLength: initial.canary.byteLength + 1 },
+    });
+    const canaryMismatch = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+    });
+    expect(canaryMismatch).toMatchObject({
+      status: "VERIFICATION_FAILED",
+      errors: [{ code: "STORAGE_CANARY_STATE_INVALID" }],
+    });
+
+    await writeStorageRunState(context.projectDirectory, {
+      ...initial,
+      state: "UPLOAD_DISPATCHING",
+    });
+    const interrupted = await resumeStorageRoundTrip(context, authorization, {
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(interrupted).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_TX_UNKNOWN_AFTER_DISPATCH", retryable: false }],
+    });
+    expect(
+      (await readStorageRunState(storageRunStatePath(context.projectDirectory, RUN_ID))).state,
+    ).toBe("UPLOAD_TX_UNKNOWN_AFTER_DISPATCH");
+  });
+
+  it("returns bounded approval errors for missing, changed, and unrefreshable quotes", async () => {
+    const context = await readyContext();
+    const initial = await preparedState(context);
+    await writeStorageRunState(context.projectDirectory, {
+      ...initial,
+      state: "APPROVAL_REQUIRED",
+    });
+    const missing = await resumeStorageRoundTrip(context, authorization, {
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(missing.errors[0]?.code).toBe("STORAGE_QUOTE_REQUIRED");
+
+    await writeStorageRunState(context.projectDirectory, {
+      ...initial,
+      state: "APPROVAL_REQUIRED",
+      quote: {
+        ...fixedQuote(initial.canary.rootHash),
+        runnerAddress: `0x${"5".repeat(40)}`,
+      },
+    });
+    const changed = await resumeStorageRoundTrip(context, authorization, {
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(changed.errors[0]?.code).toBe("STORAGE_QUOTE_CONTEXT_CHANGED");
+
+    await writeStorageRunState(context.projectDirectory, {
+      ...initial,
+      state: "APPROVAL_REQUIRED",
+      quote: fixedQuote(initial.canary.rootHash),
+    });
+    const unavailable = await resumeStorageRoundTrip(context, authorization, {
+      quote: async () => {
+        throw new Error("offline");
+      },
+      now: () => new Date(EXPIRES_AT),
+    });
+    expect(unavailable).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_QUOTE_UNAVAILABLE", retryable: true }],
+    });
+    expect(
+      (await readStorageRunState(storageRunStatePath(context.projectDirectory, RUN_ID))).state,
+    ).toBe("QUOTE_UNAVAILABLE");
   });
 });
 

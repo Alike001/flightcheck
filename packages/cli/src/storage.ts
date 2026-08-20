@@ -1,9 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   chmod,
+  mkdtemp,
   mkdir,
   readFile,
   rename,
+  rm,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -36,8 +38,17 @@ import {
   LIVE_OPERATIONS,
   type ReadyPreflightContext,
 } from "./preflight.js";
+import {
+  StorageWorkerFailure,
+  runStorageWorker,
+  type StorageWorkerInput,
+} from "./storage-worker.js";
 
 export const DEFAULT_STORAGE_TIMEOUT_MS = 10_000;
+export const DEFAULT_STORAGE_UPLOAD_TIMEOUT_MS = 120_000;
+export const DEFAULT_STORAGE_DOWNLOAD_TIMEOUT_MS = 20_000;
+export const DEFAULT_STORAGE_AVAILABILITY_ATTEMPTS = 3;
+export const DEFAULT_STORAGE_POLL_INTERVAL_MS = 2_000;
 export const STORAGE_QUOTE_TTL_MS = 5 * 60 * 1_000;
 export const STORAGE_GAS_MARGIN_BPS = 12_000n;
 const BASIS_POINTS = 10_000n;
@@ -45,6 +56,7 @@ const STORAGE_RUN_SCHEMA_VERSION = "1.0.0" as const;
 const STORAGE_CANARY_KIND = "flightcheck-storage-canary" as const;
 
 const Hex32Schema = z.string().regex(/^0x[0-9a-f]{64}$/);
+const TransactionHashSchema = z.string().regex(/^0x[0-9a-f]{64}$/);
 const AddressSchema = z.string().regex(/^0x[0-9a-f]{40}$/);
 const DecimalBigIntSchema = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const IsoDateSchema = z.string().datetime({ offset: true });
@@ -76,6 +88,11 @@ export const StorageRunStateSchema = z.strictObject({
     "APPROVAL_REQUIRED",
     "QUOTE_UNAVAILABLE",
     "BLOCKED",
+    "UPLOAD_DISPATCHING",
+    "UPLOAD_SUBMITTED",
+    "UPLOAD_TX_UNKNOWN_AFTER_DISPATCH",
+    "AVAILABILITY_PENDING",
+    "COMPLETE",
   ]),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,
@@ -87,6 +104,24 @@ export const StorageRunStateSchema = z.strictObject({
     rootHash: Hex32Schema,
   }),
   quote: StorageQuoteSchema.optional(),
+  authorization: z.strictObject({
+    maximumSpendWei: DecimalBigIntSchema,
+    approvedAt: IsoDateSchema,
+  }).optional(),
+  upload: z.strictObject({
+    rootHash: Hex32Schema,
+    txHash: TransactionHashSchema.optional(),
+    txSeq: z.number().int().nonnegative().optional(),
+    reusedExisting: z.boolean(),
+    submittedAt: IsoDateSchema.optional(),
+  }).optional(),
+  retrieval: z.strictObject({
+    attempts: z.number().int().nonnegative(),
+    sdkProofRequested: z.literal(true),
+    downloadedRootHash: Hex32Schema.optional(),
+    bytesMatch: z.boolean().optional(),
+    verifiedAt: IsoDateSchema.optional(),
+  }).optional(),
   errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{2,79}$/).optional(),
 });
 
@@ -114,6 +149,45 @@ export const StoragePreparationDataSchema = z.strictObject({
 });
 
 export type StoragePreparationData = z.infer<typeof StoragePreparationDataSchema>;
+
+export const StorageResumeInputSchema = z.strictObject({
+  runId: z.string().uuid(),
+  allowedOperations: z.array(z.enum([
+    "storage_round_trip",
+    "compute_inference",
+    "mainnet_anchor",
+  ])),
+  maximumSpendWei: DecimalBigIntSchema.optional(),
+});
+
+export type StorageResumeInput = z.infer<typeof StorageResumeInputSchema>;
+
+export const StorageResumeDataSchema = z.strictObject({
+  stage: z.literal("STORAGE"),
+  state: z.enum([
+    "APPROVAL_REQUIRED",
+    "UPLOAD_PENDING",
+    "AVAILABILITY_PENDING",
+    "PASS",
+    "BLOCKED",
+  ]),
+  projectName: z.string().min(1).max(214),
+  checks: z.array(StorageCheckSchema),
+  storage: z.strictObject({
+    canaryRootHash: Hex32Schema,
+    stateFile: z.string().min(1).max(2_048),
+    quote: StorageQuoteSchema.optional(),
+    txHash: TransactionHashSchema.optional(),
+    txSeq: z.number().int().nonnegative().optional(),
+    sdkProofRequested: z.boolean().optional(),
+    downloadedRootHash: Hex32Schema.optional(),
+    bytesMatch: z.boolean().optional(),
+  }),
+  liveOperations: z.array(FundedOperationSchema).length(3),
+  confirmationRequired: z.boolean(),
+});
+
+export type StorageResumeData = z.infer<typeof StorageResumeDataSchema>;
 
 const ShardedNodeSchema = z.object({
   url: z.string().url().refine((value) => {
@@ -738,4 +812,712 @@ export async function runStoragePreparation(
       errors: [storageError(quoteError)],
     };
   }
+}
+
+export interface StorageUploadResult {
+  rootHash: string;
+  txHash: string;
+  txSeq: number;
+  reusedExisting: boolean;
+}
+
+export interface StorageRoundTripDependencies {
+  quote: (
+    context: ReadyPreflightContext,
+    state: StorageRunState,
+  ) => Promise<StorageQuote>;
+  upload: (
+    input: Extract<StorageWorkerInput, { operation: "upload" }>,
+    timeoutMs: number,
+    onTransaction: (txHash: string) => Promise<void>,
+  ) => Promise<StorageUploadResult>;
+  download: (
+    context: ReadyPreflightContext,
+    state: StorageRunState,
+    timeoutMs: number,
+  ) => Promise<{ bytes: Uint8Array; sdkProofRequested: true }>;
+  now: () => Date;
+  sleep: (milliseconds: number) => Promise<void>;
+  uploadTimeoutMs: number;
+  downloadTimeoutMs: number;
+  availabilityAttempts: number;
+  pollIntervalMs: number;
+}
+
+/* v8 ignore start -- exercised only through the bundled worker process */
+async function uploadThroughWorker(
+  input: Extract<StorageWorkerInput, { operation: "upload" }>,
+  timeoutMs: number,
+  onTransaction: (txHash: string) => Promise<void>,
+): Promise<StorageUploadResult> {
+  const outcome = await runStorageWorker(input, timeoutMs, onTransaction);
+  if (outcome.event.operation !== "upload") {
+    throw new StorageWorkerFailure(
+      "STORAGE_WORKER_RESULT_INVALID",
+      outcome.observedTransactionHash,
+    );
+  }
+  return {
+    rootHash: outcome.event.rootHash,
+    txHash: outcome.event.txHash,
+    txSeq: outcome.event.txSeq,
+    reusedExisting: outcome.event.reusedExisting,
+  };
+}
+
+async function downloadThroughWorker(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+  timeoutMs: number,
+): Promise<{ bytes: Uint8Array; sdkProofRequested: true }> {
+  const temporaryRoot = join(context.projectDirectory, ".flightcheck", "tmp");
+  await mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
+  await chmod(temporaryRoot, 0o700);
+  const temporaryDirectory = await mkdtemp(join(temporaryRoot, "storage-download-"));
+  await chmod(temporaryDirectory, 0o700);
+  const outputPath = join(temporaryDirectory, "canary.bin");
+
+  try {
+    const outcome = await runStorageWorker({
+      operation: "download",
+      rootHash: state.canary.rootHash,
+      indexerUrl: context.storageIndexerUrl,
+      outputPath,
+    }, timeoutMs);
+    if (outcome.event.operation !== "download") {
+      throw new StorageWorkerFailure("STORAGE_WORKER_RESULT_INVALID");
+    }
+    return {
+      bytes: new Uint8Array(await readFile(outputPath)),
+      sdkProofRequested: outcome.event.sdkProofRequested,
+    };
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+const DEFAULT_ROUND_TRIP_DEPENDENCIES: StorageRoundTripDependencies = {
+  quote: quoteStorageUpload,
+  upload: uploadThroughWorker,
+  download: downloadThroughWorker,
+  now: currentDate,
+  sleep: (milliseconds) => new Promise((resolveSleep) => {
+    setTimeout(resolveSleep, milliseconds);
+  }),
+  uploadTimeoutMs: DEFAULT_STORAGE_UPLOAD_TIMEOUT_MS,
+  downloadTimeoutMs: DEFAULT_STORAGE_DOWNLOAD_TIMEOUT_MS,
+  availabilityAttempts: DEFAULT_STORAGE_AVAILABILITY_ATTEMPTS,
+  pollIntervalMs: DEFAULT_STORAGE_POLL_INTERVAL_MS,
+};
+/* v8 ignore stop */
+
+function relativeStateFile(runId: string): string {
+  return join(".flightcheck", "runs", `${runId}.json`);
+}
+
+function check(
+  code: string,
+  status: "PASS" | "FAIL" | "PENDING",
+  message: string,
+): z.infer<typeof StorageCheckSchema> {
+  return StorageCheckSchema.parse({ code, status, message });
+}
+
+function resumeData(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+  outputState: StorageResumeData["state"],
+  checks: StorageResumeData["checks"],
+  confirmationRequired: boolean,
+): StorageResumeData {
+  return StorageResumeDataSchema.parse({
+    stage: "STORAGE",
+    state: outputState,
+    projectName: context.projectName,
+    checks,
+    storage: {
+      canaryRootHash: state.canary.rootHash,
+      stateFile: relativeStateFile(state.runId),
+      quote: state.quote,
+      txHash: state.upload?.txHash,
+      txSeq: state.upload?.txSeq,
+      sdkProofRequested: state.retrieval?.sdkProofRequested,
+      downloadedRootHash: state.retrieval?.downloadedRootHash,
+      bytesMatch: state.retrieval?.bytesMatch,
+    },
+    liveOperations: LIVE_OPERATIONS,
+    confirmationRequired,
+  });
+}
+
+function resumeResult(
+  commandStatus: CommandResult["status"],
+  state: StorageRunState,
+  data: StorageResumeData,
+  errors: StructuredError[] = [],
+): CommandResult {
+  const exitCode = commandStatus === "SUCCESS"
+    ? EXIT_CODES.SUCCESS
+    : commandStatus === "VERIFICATION_FAILED"
+      ? EXIT_CODES.VERIFICATION_FAILED
+      : commandStatus === "CONFIG_ERROR"
+        ? EXIT_CODES.CONFIG_ERROR
+        : EXIT_CODES.PENDING_OR_UNAVAILABLE;
+  return {
+    schemaVersion: "1.0.0",
+    command: "resume",
+    status: commandStatus,
+    exitCode,
+    runId: state.runId,
+    data,
+    errors,
+  };
+}
+
+function storageStructuredError(
+  code: string,
+  message: string,
+  retryable: boolean,
+): StructuredError {
+  return { code, message, retryable, dependency: "STORAGE" };
+}
+
+function authorizationError(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+  code: string,
+  message: string,
+): CommandResult {
+  return resumeResult(
+    "PENDING",
+    state,
+    resumeData(
+      context,
+      state,
+      "APPROVAL_REQUIRED",
+      [check(code, "PENDING", message)],
+      true,
+    ),
+    [storageStructuredError(code, message, false)],
+  );
+}
+
+function refreshedQuoteResult(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+): CommandResult {
+  const message = "A fresh enforceable Storage quote is ready. Review its exact components before authorizing upload.";
+  return resumeResult(
+    "PENDING",
+    state,
+    resumeData(
+      context,
+      state,
+      "APPROVAL_REQUIRED",
+      [check("STORAGE_QUOTE_REFRESHED", "PASS", message)],
+      true,
+    ),
+  );
+}
+
+function validateApproval(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+  input: StorageResumeInput,
+  now: Date,
+): { maximumSpendWei: bigint } | { result: CommandResult } {
+  if (!input.allowedOperations.includes("storage_round_trip")) {
+    return {
+      result: authorizationError(
+        context,
+        state,
+        "STORAGE_OPERATION_NOT_AUTHORIZED",
+        "Storage upload requires --allow-operation storage_round_trip.",
+      ),
+    };
+  }
+  if (!input.maximumSpendWei) {
+    return {
+      result: authorizationError(
+        context,
+        state,
+        "STORAGE_MAXIMUM_SPEND_REQUIRED",
+        "Storage upload requires --maximum-spend-wei with an enforceable limit.",
+      ),
+    };
+  }
+  const quote = state.quote;
+  if (!quote) {
+    return {
+      result: authorizationError(
+        context,
+        state,
+        "STORAGE_QUOTE_REQUIRED",
+        "A complete Storage quote is required before upload approval.",
+      ),
+    };
+  }
+  if (new Date(quote.expiresAt).getTime() <= now.getTime()) {
+    return {
+      result: authorizationError(
+        context,
+        state,
+        "STORAGE_QUOTE_EXPIRED",
+        "The Storage quote expired and must be refreshed before upload.",
+      ),
+    };
+  }
+  const runnerAddress = new Wallet(context.privateKey).address.toLowerCase();
+  if (
+    quote.rootHash !== state.canary.rootHash ||
+    quote.runnerAddress !== runnerAddress ||
+    quote.chainId !== context.config.projectChain.chainId
+  ) {
+    return {
+      result: authorizationError(
+        context,
+        state,
+        "STORAGE_QUOTE_CONTEXT_CHANGED",
+        "The Storage quote no longer matches the persisted root, runner, or chain.",
+      ),
+    };
+  }
+  const quotedMaximum = BigInt(quote.storageFeeWei)
+    + BigInt(quote.gasLimit) * BigInt(quote.gasPriceWei);
+  if (quotedMaximum.toString() !== quote.maximumSpendWei) {
+    return {
+      result: authorizationError(
+        context,
+        state,
+        "STORAGE_QUOTE_INVALID",
+        "The persisted Storage quote does not match its fee and gas components.",
+      ),
+    };
+  }
+  const approvedMaximum = BigInt(input.maximumSpendWei);
+  if (approvedMaximum < quotedMaximum) {
+    return {
+      result: authorizationError(
+        context,
+        state,
+        "STORAGE_MAXIMUM_SPEND_TOO_LOW",
+        "The approved maximum is lower than the quoted Storage transaction ceiling.",
+      ),
+    };
+  }
+  return { maximumSpendWei: approvedMaximum };
+}
+
+const SAFE_PRE_DISPATCH_FAILURES = new Set([
+  "STORAGE_RUNNER_MISMATCH",
+  "STORAGE_CHAIN_ID_CHANGED",
+  "STORAGE_NONCE_CHANGED",
+  "STORAGE_CANARY_ROOT_MISMATCH",
+  "STORAGE_UPLOADER_UNAVAILABLE",
+  "STORAGE_FLOW_ADDRESS_CHANGED",
+]);
+
+async function persistObservedTransaction(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+  txHash: string,
+  now: () => Date,
+): Promise<StorageRunState> {
+  const nextState = StorageRunStateSchema.parse({
+    ...state,
+    state: "UPLOAD_SUBMITTED",
+    updatedAt: now().toISOString(),
+    upload: {
+      rootHash: state.canary.rootHash,
+      txHash: txHash.toLowerCase(),
+      reusedExisting: false,
+      submittedAt: now().toISOString(),
+    },
+    errorCode: undefined,
+  });
+  await writeStorageRunState(context.projectDirectory, nextState);
+  return nextState;
+}
+
+async function attemptStorageDownload(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+  dependencies: StorageRoundTripDependencies,
+): Promise<CommandResult> {
+  let attempts = state.retrieval?.attempts ?? 0;
+  for (let attempt = 0; attempt < dependencies.availabilityAttempts; attempt += 1) {
+    attempts += 1;
+    try {
+      const downloaded = await dependencies.download(
+        context,
+        state,
+        dependencies.downloadTimeoutMs,
+      );
+      const downloadedRootHash = await computeStorageRoot(downloaded.bytes);
+      const expectedBytes = Uint8Array.from(Buffer.from(state.canary.bytesBase64, "base64"));
+      const bytesMatch = Buffer.from(downloaded.bytes).equals(Buffer.from(expectedBytes));
+      const rootMatches = downloadedRootHash === state.canary.rootHash;
+      const complete = rootMatches && bytesMatch;
+      const nextState = StorageRunStateSchema.parse({
+        ...state,
+        state: complete ? "COMPLETE" : "BLOCKED",
+        updatedAt: dependencies.now().toISOString(),
+        retrieval: {
+          attempts,
+          sdkProofRequested: downloaded.sdkProofRequested,
+          downloadedRootHash,
+          bytesMatch,
+          verifiedAt: dependencies.now().toISOString(),
+        },
+        errorCode: complete ? undefined : rootMatches
+          ? "STORAGE_DOWNLOADED_BYTES_MISMATCH"
+          : "STORAGE_DOWNLOADED_ROOT_MISMATCH",
+      });
+      await writeStorageRunState(context.projectDirectory, nextState);
+      if (!complete) {
+        const code = nextState.errorCode ?? "STORAGE_DOWNLOAD_VERIFICATION_FAILED";
+        const message = rootMatches
+          ? "The downloaded bytes differ from the prepared canary."
+          : "The independently recomputed downloaded root differs from the prepared canary root.";
+        return resumeResult(
+          "VERIFICATION_FAILED",
+          nextState,
+          resumeData(context, nextState, "BLOCKED", [check(code, "FAIL", message)], false),
+          [storageStructuredError(code, message, false)],
+        );
+      }
+      return resumeResult(
+        "SUCCESS",
+        nextState,
+        resumeData(context, nextState, "PASS", [
+          check(
+            "STORAGE_ROUND_TRIP_VERIFIED",
+            "PASS",
+            "0G Storage returned the canary with the same independently recomputed root and exact bytes.",
+          ),
+        ], false),
+      );
+    } catch {
+      if (attempt + 1 < dependencies.availabilityAttempts) {
+        await dependencies.sleep(dependencies.pollIntervalMs);
+      }
+    }
+  }
+
+  const nextState = StorageRunStateSchema.parse({
+    ...state,
+    state: "AVAILABILITY_PENDING",
+    updatedAt: dependencies.now().toISOString(),
+    retrieval: {
+      attempts,
+      sdkProofRequested: true,
+    },
+    errorCode: "STORAGE_NOT_RETRIEVABLE_YET",
+  });
+  await writeStorageRunState(context.projectDirectory, nextState);
+  const message = "The uploaded root is not retrievable within this bounded attempt window. Resume will poll the same root without another transaction.";
+  return resumeResult(
+    "PENDING",
+    nextState,
+    resumeData(
+      context,
+      nextState,
+      "AVAILABILITY_PENDING",
+      [check("STORAGE_NOT_RETRIEVABLE_YET", "PENDING", message)],
+      false,
+    ),
+    [storageStructuredError("STORAGE_NOT_RETRIEVABLE_YET", message, true)],
+  );
+}
+
+export async function resumeStorageRoundTrip(
+  context: ReadyPreflightContext,
+  rawInput: StorageResumeInput,
+  dependencyOverrides: Partial<StorageRoundTripDependencies> = {},
+): Promise<CommandResult> {
+  const input = StorageResumeInputSchema.parse(rawInput);
+  const dependencies: StorageRoundTripDependencies = {
+    ...DEFAULT_ROUND_TRIP_DEPENDENCIES,
+    ...dependencyOverrides,
+  };
+  let state = await readStorageRunState(
+    storageRunStatePath(context.projectDirectory, input.runId),
+  );
+  const runnerAddress = new Wallet(context.privateKey).address.toLowerCase();
+  if (state.projectName !== context.projectName || state.runnerAddress !== runnerAddress) {
+    const message = "The persisted Storage run belongs to a different project or runner.";
+    return resumeResult(
+      "VERIFICATION_FAILED",
+      state,
+      resumeData(
+        context,
+        state,
+        "BLOCKED",
+        [check("STORAGE_RUN_CONTEXT_MISMATCH", "FAIL", message)],
+        false,
+      ),
+      [storageStructuredError("STORAGE_RUN_CONTEXT_MISMATCH", message, false)],
+    );
+  }
+  const canaryBytes = Uint8Array.from(Buffer.from(state.canary.bytesBase64, "base64"));
+  if (
+    canaryBytes.byteLength !== state.canary.byteLength ||
+    await computeStorageRoot(canaryBytes) !== state.canary.rootHash
+  ) {
+    const message = "The persisted canary bytes no longer match their recorded 0G Merkle root.";
+    return resumeResult(
+      "VERIFICATION_FAILED",
+      state,
+      resumeData(
+        context,
+        state,
+        "BLOCKED",
+        [check("STORAGE_CANARY_STATE_INVALID", "FAIL", message)],
+        false,
+      ),
+      [storageStructuredError("STORAGE_CANARY_STATE_INVALID", message, false)],
+    );
+  }
+
+  if (state.state === "COMPLETE") {
+    return resumeResult(
+      "SUCCESS",
+      state,
+      resumeData(context, state, "PASS", [
+        check("STORAGE_ROUND_TRIP_ALREADY_VERIFIED", "PASS", "The persisted Storage round trip is already verified."),
+      ], false),
+    );
+  }
+  if (state.state === "BLOCKED") {
+    const code = state.errorCode ?? "STORAGE_RUN_BLOCKED";
+    const message = "The persisted Storage run contains a blocking verification failure.";
+    return resumeResult(
+      "VERIFICATION_FAILED",
+      state,
+      resumeData(context, state, "BLOCKED", [check(code, "FAIL", message)], false),
+      [storageStructuredError(code, message, false)],
+    );
+  }
+  if (state.state === "UPLOAD_DISPATCHING") {
+    state = StorageRunStateSchema.parse({
+      ...state,
+      state: "UPLOAD_TX_UNKNOWN_AFTER_DISPATCH",
+      updatedAt: dependencies.now().toISOString(),
+      errorCode: "STORAGE_TX_UNKNOWN_AFTER_DISPATCH",
+    });
+    await writeStorageRunState(context.projectDirectory, state);
+  }
+  if (state.state === "UPLOAD_TX_UNKNOWN_AFTER_DISPATCH") {
+    const message = "The prior process stopped after dispatch began but before a transaction hash was safely recorded. Automatic retry is blocked to prevent duplicate spending.";
+    return resumeResult(
+      "PENDING",
+      state,
+      resumeData(context, state, "UPLOAD_PENDING", [
+        check("STORAGE_TX_UNKNOWN_AFTER_DISPATCH", "PENDING", message),
+      ], true),
+      [storageStructuredError("STORAGE_TX_UNKNOWN_AFTER_DISPATCH", message, false)],
+    );
+  }
+
+  if (state.state === "PREPARED" || state.state === "QUOTE_UNAVAILABLE") {
+    try {
+      const quote = await dependencies.quote(context, state);
+      state = StorageRunStateSchema.parse({
+        ...state,
+        state: "APPROVAL_REQUIRED",
+        quote,
+        updatedAt: dependencies.now().toISOString(),
+        errorCode: undefined,
+      });
+      await writeStorageRunState(context.projectDirectory, state);
+      return refreshedQuoteResult(context, state);
+    } catch {
+      const message = "A complete enforceable Storage quote is still unavailable.";
+      return resumeResult(
+        "PENDING",
+        state,
+        resumeData(context, state, "APPROVAL_REQUIRED", [
+          check("STORAGE_QUOTE_UNAVAILABLE", "PENDING", message),
+        ], true),
+        [storageStructuredError("STORAGE_QUOTE_UNAVAILABLE", message, true)],
+      );
+    }
+  }
+
+  if (state.state === "APPROVAL_REQUIRED") {
+    if (
+      state.quote &&
+      new Date(state.quote.expiresAt).getTime() <= dependencies.now().getTime()
+    ) {
+      try {
+        const quote = await dependencies.quote(context, state);
+        state = StorageRunStateSchema.parse({
+          ...state,
+          state: "APPROVAL_REQUIRED",
+          quote,
+          updatedAt: dependencies.now().toISOString(),
+          errorCode: undefined,
+        });
+        await writeStorageRunState(context.projectDirectory, state);
+        return refreshedQuoteResult(context, state);
+      } catch {
+        state = StorageRunStateSchema.parse({
+          ...state,
+          state: "QUOTE_UNAVAILABLE",
+          quote: undefined,
+          updatedAt: dependencies.now().toISOString(),
+          errorCode: "STORAGE_QUOTE_UNAVAILABLE",
+        });
+        await writeStorageRunState(context.projectDirectory, state);
+        const message = "The expired Storage quote could not be refreshed without sending a transaction.";
+        return resumeResult(
+          "PENDING",
+          state,
+          resumeData(context, state, "APPROVAL_REQUIRED", [
+            check("STORAGE_QUOTE_UNAVAILABLE", "PENDING", message),
+          ], true),
+          [storageStructuredError("STORAGE_QUOTE_UNAVAILABLE", message, true)],
+        );
+      }
+    }
+    const approval = validateApproval(context, state, input, dependencies.now());
+    if ("result" in approval) {
+      return approval.result;
+    }
+    const quote = state.quote;
+    if (!quote) {
+      return authorizationError(
+        context,
+        state,
+        "STORAGE_QUOTE_REQUIRED",
+        "A complete Storage quote is required before upload approval.",
+      );
+    }
+    state = StorageRunStateSchema.parse({
+      ...state,
+      state: "UPLOAD_DISPATCHING",
+      updatedAt: dependencies.now().toISOString(),
+      authorization: {
+        maximumSpendWei: approval.maximumSpendWei.toString(),
+        approvedAt: dependencies.now().toISOString(),
+      },
+      errorCode: undefined,
+    });
+    await writeStorageRunState(context.projectDirectory, state);
+
+    try {
+      const uploadState = state;
+      const upload = await dependencies.upload({
+        operation: "upload",
+        bytesBase64: state.canary.bytesBase64,
+        expectedRootHash: state.canary.rootHash,
+        expectedRunnerAddress: state.runnerAddress,
+        expectedFlowAddress: quote.flowAddress,
+        chainId: quote.chainId,
+        networkName: context.config.projectChain.name,
+        rpcUrl: context.storageRpcUrl,
+        indexerUrl: context.storageIndexerUrl,
+        privateKey: context.privateKey,
+        storageFeeWei: quote.storageFeeWei,
+        gasPriceWei: quote.gasPriceWei,
+        gasLimit: quote.gasLimit,
+        nonce: quote.nonce,
+      }, dependencies.uploadTimeoutMs, async (txHash) => {
+        state = await persistObservedTransaction(
+          context,
+          uploadState,
+          txHash,
+          dependencies.now,
+        );
+      });
+      if (upload.rootHash !== state.canary.rootHash) {
+        throw new StorageWorkerFailure(
+          "STORAGE_UPLOAD_ROOT_MISMATCH",
+          upload.txHash || state.upload?.txHash,
+        );
+      }
+      state = StorageRunStateSchema.parse({
+        ...state,
+        state: "AVAILABILITY_PENDING",
+        updatedAt: dependencies.now().toISOString(),
+        upload: {
+          rootHash: upload.rootHash,
+          txHash: upload.txHash || state.upload?.txHash,
+          txSeq: upload.txSeq,
+          reusedExisting: upload.reusedExisting,
+          submittedAt: state.upload?.submittedAt ?? dependencies.now().toISOString(),
+        },
+        errorCode: undefined,
+      });
+      await writeStorageRunState(context.projectDirectory, state);
+    } catch (error) {
+      const failure = error instanceof StorageWorkerFailure
+        ? error
+        : new StorageWorkerFailure("STORAGE_WORKER_FAILED");
+      if (failure.observedTransactionHash || state.upload?.txHash) {
+        const txHash = failure.observedTransactionHash ?? state.upload?.txHash;
+        if (txHash && !state.upload?.txHash) {
+          state = await persistObservedTransaction(
+            context,
+            state,
+            txHash,
+            dependencies.now,
+          );
+        }
+        state = StorageRunStateSchema.parse({
+          ...state,
+          state: "UPLOAD_SUBMITTED",
+          updatedAt: dependencies.now().toISOString(),
+          errorCode: failure.code,
+        });
+        await writeStorageRunState(context.projectDirectory, state);
+        const message = "A Storage transaction hash was recorded, but the worker did not finish. Resume will inspect the same root without sending another transaction.";
+        return resumeResult(
+          "PENDING",
+          state,
+          resumeData(context, state, "UPLOAD_PENDING", [
+            check(failure.code, "PENDING", message),
+          ], false),
+          [storageStructuredError(failure.code, message, true)],
+        );
+      }
+      if (SAFE_PRE_DISPATCH_FAILURES.has(failure.code)) {
+        state = StorageRunStateSchema.parse({
+          ...state,
+          state: "QUOTE_UNAVAILABLE",
+          quote: undefined,
+          updatedAt: dependencies.now().toISOString(),
+          errorCode: failure.code,
+        });
+        await writeStorageRunState(context.projectDirectory, state);
+        const message = "Storage conditions changed before transaction dispatch. No spend was observed, and a fresh quote is required.";
+        return resumeResult(
+          "PENDING",
+          state,
+          resumeData(context, state, "APPROVAL_REQUIRED", [
+            check(failure.code, "PENDING", message),
+          ], true),
+          [storageStructuredError(failure.code, message, true)],
+        );
+      }
+      state = StorageRunStateSchema.parse({
+        ...state,
+        state: "UPLOAD_TX_UNKNOWN_AFTER_DISPATCH",
+        updatedAt: dependencies.now().toISOString(),
+        errorCode: "STORAGE_TX_UNKNOWN_AFTER_DISPATCH",
+      });
+      await writeStorageRunState(context.projectDirectory, state);
+      const message = "Upload dispatch may have reached the RPC, but no transaction hash was safely recorded. Automatic retry is blocked to prevent duplicate spending.";
+      return resumeResult(
+        "PENDING",
+        state,
+        resumeData(context, state, "UPLOAD_PENDING", [
+          check("STORAGE_TX_UNKNOWN_AFTER_DISPATCH", "PENDING", message),
+        ], true),
+        [storageStructuredError("STORAGE_TX_UNKNOWN_AFTER_DISPATCH", message, false)],
+      );
+    }
+  }
+
+  return attemptStorageDownload(context, state, dependencies);
 }

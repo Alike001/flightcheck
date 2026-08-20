@@ -10,7 +10,11 @@ import {
 } from "@flightcheck/report";
 
 import type { PreflightInput } from "./preflight.js";
-import { runFlightcheck } from "./run.js";
+import { resumeFlightcheck, runFlightcheck } from "./run.js";
+import {
+  StorageResumeInputSchema,
+  type StorageResumeInput,
+} from "./storage.js";
 
 export interface CliIo {
   stdout: (text: string) => void | Promise<void>;
@@ -19,6 +23,10 @@ export interface CliIo {
 
 export interface CliDependencies {
   run: (input: PreflightInput) => Promise<CommandResult>;
+  resume: (
+    input: PreflightInput,
+    storageInput: StorageResumeInput,
+  ) => Promise<CommandResult>;
 }
 
 const PROCESS_IO: CliIo = {
@@ -46,7 +54,10 @@ const PROCESS_IO: CliIo = {
 
 const DEFAULT_CLI_DEPENDENCIES: CliDependencies = {
   run: runFlightcheck,
+  resume: resumeFlightcheck,
 };
+
+const USAGE = "Usage: flightcheck run [--cwd <project-directory>] [--json] | flightcheck resume --run-id <uuid> [--allow-operation storage_round_trip --maximum-spend-wei <wei>] [--cwd <project-directory>] [--json]";
 
 function parseCliArgs(args: readonly string[]) {
   return parseArgs({
@@ -56,6 +67,9 @@ function parseCliArgs(args: readonly string[]) {
     options: {
       json: { type: "boolean", default: false },
       cwd: { type: "string" },
+      "run-id": { type: "string" },
+      "allow-operation": { type: "string", multiple: true },
+      "maximum-spend-wei": { type: "string" },
     },
   });
 }
@@ -110,6 +124,10 @@ function formatHuman(result: CommandResult): string {
       lines.push("Chain preflight passed. Storage, Compute, and mainnet anchor operations still require explicit approval and may spend funds.");
     } else if (result.data.state === "APPROVAL_REQUIRED") {
       lines.push("Storage quote prepared. Review the maximum spend and explicitly approve the Storage round trip before any transaction is sent.");
+    } else if (result.data.state === "AVAILABILITY_PENDING") {
+      lines.push("The Storage transaction is recorded. Resume polls the same root without sending another transaction.");
+    } else if (result.data.state === "PASS") {
+      lines.push("Storage round trip verified by independent Merkle-root recomputation and exact byte comparison.");
     }
   } else {
     for (const error of result.errors) {
@@ -133,8 +151,12 @@ async function writeResult(result: CommandResult, json: boolean, io: CliIo): Pro
 export async function executeCli(
   args: readonly string[],
   io: CliIo = PROCESS_IO,
-  dependencies: CliDependencies = DEFAULT_CLI_DEPENDENCIES,
+  dependencyOverrides: Partial<CliDependencies> = {},
 ): Promise<number> {
+  const dependencies: CliDependencies = {
+    ...DEFAULT_CLI_DEPENDENCIES,
+    ...dependencyOverrides,
+  };
   const jsonRequested = args.some((argument) => argument === "--json" || argument.startsWith("--json="));
   const command = requestedCommand(args);
   let result: CommandResult;
@@ -147,7 +169,7 @@ export async function executeCli(
       command,
       "USAGE_ERROR",
       "CLI_USAGE_INVALID",
-      "Usage: flightcheck run [--cwd <project-directory>] [--json]",
+      USAGE,
     );
     await writeResult(result, jsonRequested, io);
     return result.exitCode;
@@ -159,9 +181,9 @@ export async function executeCli(
       command,
       "USAGE_ERROR",
       "CLI_USAGE_INVALID",
-      "Usage: flightcheck run [--cwd <project-directory>] [--json]",
+      USAGE,
     );
-  } else if (parsedCommand !== "run") {
+  } else if (parsedCommand === "verify") {
     const knownCommand = parsedCommand as Command;
     result = resultForError(
       knownCommand,
@@ -169,7 +191,21 @@ export async function executeCli(
       "CLI_COMMAND_NOT_IMPLEMENTED",
       `The ${knownCommand} command is reserved but has not been implemented yet.`,
     );
-  } else {
+  } else if (parsedCommand === "run") {
+    if (
+      parsed.values["run-id"] ||
+      parsed.values["allow-operation"] ||
+      parsed.values["maximum-spend-wei"]
+    ) {
+      result = resultForError(
+        "run",
+        "USAGE_ERROR",
+        "CLI_USAGE_INVALID",
+        USAGE,
+      );
+      await writeResult(result, jsonRequested, io);
+      return result.exitCode;
+    }
     const preflightInput = parsed.values.cwd
       ? { projectDirectory: parsed.values.cwd }
       : {};
@@ -184,6 +220,37 @@ export async function executeCli(
         "CLI_INTERNAL_ERROR",
         "Flightcheck encountered an unexpected internal error.",
       );
+    }
+  } else {
+    const parsedResumeInput = StorageResumeInputSchema.safeParse({
+      runId: parsed.values["run-id"],
+      allowedOperations: parsed.values["allow-operation"] ?? [],
+      maximumSpendWei: parsed.values["maximum-spend-wei"],
+    });
+    if (!parsedResumeInput.success) {
+      result = resultForError(
+        "resume",
+        "USAGE_ERROR",
+        "CLI_USAGE_INVALID",
+        USAGE,
+      );
+    } else {
+      const preflightInput = parsed.values.cwd
+        ? { projectDirectory: parsed.values.cwd }
+        : {};
+      try {
+        result = CommandResultSchema.parse(await dependencies.resume(
+          preflightInput,
+          parsedResumeInput.data,
+        ));
+      } catch {
+        result = resultForError(
+          "resume",
+          "INTERNAL_ERROR",
+          "CLI_INTERNAL_ERROR",
+          "Flightcheck encountered an unexpected internal error.",
+        );
+      }
     }
   }
 

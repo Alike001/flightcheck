@@ -4,8 +4,8 @@ The current `run` command checks whether a TypeScript 0G project is ready for
 live Storage and Direct Compute probes. It validates the project setup, reads
 the real project and anchor RPC chain IDs, and proves local control of the
 configured runner through an EIP-712 signature round trip. It then persists a
-secret-free nonce canary and obtains a read-only, expiring Storage quote. It
-broadcasts no transaction and spends no funds in this implementation slice.
+secret-free nonce canary and obtains a read-only, expiring Storage quote. The
+`run` command broadcasts no transaction and spends no funds.
 
 ## Required project config
 
@@ -71,10 +71,35 @@ returns `CONFIG_ERROR` with exit code `2`, a known chain mismatch returns
 `PENDING` with exit code `4`. JSON mode writes exactly one result envelope to
 standard output, and it never includes an endpoint, private key, or signature.
 
+After reviewing the returned quote, authorize that exact operation and set a
+hard wei ceiling with `resume`:
+
+```bash
+node packages/cli/dist/bin.js resume \
+  --cwd /path/to/project \
+  --run-id <runId> \
+  --allow-operation storage_round_trip \
+  --maximum-spend-wei <quotedMaximumSpendWei> \
+  --json
+```
+
+Both funded flags are required before signing or dispatch. Flightcheck rejects
+a lower ceiling, an expired quote, a changed runner, chain, Flow contract,
+Merkle root, or transaction nonce. A refreshed quote always returns for review
+and requires a new command invocation, so an approval can't silently carry
+forward to changed costs.
+
+The SDK upload runs in a terminable worker because version 1.2.11 can wait for
+Storage finality without a bound. The parent saves `UPLOAD_DISPATCHING` before
+starting and saves the first transaction hash as soon as the SDK reports it. If
+dispatch might have occurred but no hash was saved, automatic retry is blocked
+to avoid duplicate spending. Once a hash is known, later `resume` calls poll and
+download the same root without sending another transaction.
+
 The published 0G Storage SDK's `proof` download flag is not treated as verified
-evidence because version 1.2.11 does not implement that check. Flightcheck will
-request it, then independently recompute the downloaded Merkle root and compare
-the exact canary bytes before a later Storage result can become `PASS`.
+evidence because version 1.2.11 does not implement that check. Flightcheck
+requests it, then independently recomputes the downloaded Merkle root and
+compares the exact canary bytes before Storage becomes `PASS`.
 
 The future published command is `npx @alike001/flightcheck run --json`. The
 package has not been published yet, so use the local command above for now.

@@ -45,7 +45,7 @@ Flightcheck verifies the declared 0G environment and its canonical protocol oper
 
 ## Workspace
 
-- `packages/cli`: deterministic project and Chain preflight plus resumable Storage canary preparation and a read-only spend quote through `run`. Funded upload, `resume`, and `verify` follow in later slices.
+- `packages/cli`: deterministic project and Chain preflight, a no-spend Storage quote through `run`, and an explicitly authorized, spend-limited, resumable Storage upload and retrieval through `resume`. `verify` follows in a later slice.
 - `packages/report`: shared schema, canonicalization, hashing, signing, redaction, deterministic state reduction, and agent-readable command results.
 - `apps/web`: the landing page, report page, and versioned report API.
 - `apps/indexer`: idempotent and reorg-aware 0G mainnet event ingestion.
@@ -77,15 +77,18 @@ chain IDs and proves local control of the runner with an EIP-712 signature round
 trip. It then creates a secret-free nonce canary, persists its 0G Merkle root in
 `.flightcheck/runs/`, selects trusted Storage coverage, verifies the Storage
 node's chain identity, and derives an expiring maximum upload spend from the
-Flow and market contracts. These stages send no transaction and spend no funds.
-A complete quote stops at `APPROVAL_REQUIRED`. Storage upload, Compute, and
-mainnet anchor proof remain pending. See `packages/cli/README.md` for the config
-shape and local command.
+Flow and market contracts. The `run` path sends no transaction and stops at
+`APPROVAL_REQUIRED`. The `resume` path requires both an explicit
+`storage_round_trip` allow-list entry and a sufficient maximum spend. It runs
+the pinned SDK behind a terminable worker, persists transaction evidence before
+returning, polls retrieval with bounded attempts, recomputes the downloaded 0G
+Merkle root, and compares exact bytes. Compute and mainnet anchor proof remain
+pending. See `packages/cli/README.md` for the config shape and commands.
 
 Machine-facing commands will use versioned JSON envelopes, stable error identifiers, and documented exit codes. JSON output never grants permission to spend. Non-interactive funded operations must provide explicit permissions and enforceable spending limits.
 
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, and read-only Chain stage are merged. The resumable Storage canary and read-only quote are implemented on issue #10. Funded Storage upload and retrieval, Compute, the indexer, and public pages remain.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, and read-only Chain stage are merged. Issue #10 now contains the complete Storage state machine, including the no-spend quote, explicit funded authorization, spend ceiling, worker isolation, crash-safe transaction states, bounded retrieval, and independent byte and Merkle verification. A real funded 0G Storage run is still required before issue #10 can close. Compute, the indexer, and public pages remain.
 
 Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), and the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10). Each meaningful feature has a focused issue and tests before the next feature starts.

@@ -9,7 +9,10 @@ import {
   type PreflightInput,
 } from "./preflight.js";
 import {
+  resumeStorageRoundTrip,
   runStoragePreparation,
+  type StorageResumeInput,
+  type StorageRoundTripDependencies,
   type StoragePreparationDependencies,
 } from "./storage.js";
 
@@ -29,4 +32,33 @@ export async function runFlightcheck(
   }
 
   return runStoragePreparation(preflight.context, storageDependencies);
+}
+
+export async function resumeFlightcheck(
+  input: PreflightInput,
+  storageInput: StorageResumeInput,
+  chainDependencies: Partial<ChainDependencies> = {},
+  storageDependencies: Partial<StorageRoundTripDependencies> = {},
+): Promise<CommandResult> {
+  const preflight = await evaluatePreflight(input);
+  if (!preflight.context) {
+    return {
+      ...preflight.result,
+      command: "resume",
+    };
+  }
+
+  const chain = await runChainPreflight(preflight.context, chainDependencies);
+  if (chain.data.state !== "READY_FOR_STORAGE") {
+    return {
+      ...chain,
+      command: "resume",
+    };
+  }
+
+  return resumeStorageRoundTrip(
+    preflight.context,
+    storageInput,
+    storageDependencies,
+  );
 }
