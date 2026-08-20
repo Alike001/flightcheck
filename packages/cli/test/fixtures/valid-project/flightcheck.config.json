@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0.0",
+  "projectChain": {
+    "name": "0G Galileo Testnet",
+    "chainId": 16602
+  },
+  "anchorChain": {
+    "name": "0G Mainnet",
+    "chainId": 16661,
+    "registryAddress": "0x1111111111111111111111111111111111111111"
+  },
+  "storage": {
+    "name": "0G Storage Testnet"
+  },
+  "compute": {
+    "name": "0G Compute Testnet",
+    "providerAddress": "0x2222222222222222222222222222222222222222"
+  },
+  "environment": {
+    "projectRpcUrl": "TEST_PROJECT_RPC_URL",
+    "anchorRpcUrl": "TEST_ANCHOR_RPC_URL",
+    "storageRpcUrl": "TEST_STORAGE_RPC_URL",
+    "storageIndexerUrl": "TEST_STORAGE_INDEXER_URL",
+    "computeRpcUrl": "TEST_COMPUTE_RPC_URL",
+    "runnerPrivateKey": "TEST_RUNNER_PRIVATE_KEY"
+  }
+}

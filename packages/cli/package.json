@@ -1,0 +1,26 @@
+{
+  "name": "@alike001/flightcheck",
+  "version": "0.1.0",
+  "description": "Deterministic 0G integration preflight and proof CLI",
+  "type": "module",
+  "bin": {
+    "flightcheck": "./dist/bin.js"
+  },
+  "files": [
+    "dist/bin.js",
+    "dist/bin.js.map",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/bin.js --sourcemap --banner:js=\"#!/usr/bin/env node\"",
+    "typecheck": "pnpm --filter @flightcheck/report build && tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@flightcheck/report": "workspace:*",
+    "esbuild": "0.27.2",
+    "zod": "4.4.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

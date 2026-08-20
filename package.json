@@ -19,8 +19,8 @@
     "contracts:test": "forge test --root contracts",
     "schema:check": "pnpm --filter @flightcheck/report schema:check",
     "schema:write": "pnpm --filter @flightcheck/report schema:write",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test": "pnpm build && vitest run",
+    "test:coverage": "pnpm build && vitest run --coverage",
     "typecheck": "pnpm --recursive typecheck && tsc -p tsconfig.test.json"
   },
   "devDependencies": {

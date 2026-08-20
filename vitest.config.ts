@@ -12,8 +12,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
-      include: ["packages/report/src/**/*.ts"],
-      exclude: ["packages/report/src/index.ts"],
+      include: ["packages/{cli,report}/src/**/*.ts"],
+      exclude: ["packages/{cli,report}/src/{bin,index}.ts"],
       thresholds: {
         branches: 90,
         functions: 95,
