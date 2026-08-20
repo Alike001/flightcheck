@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "1.0.0",
+  "toolVersion": "0.1.0",
+  "runId": "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+  "runnerAddress": "0x1111111111111111111111111111111111111111",
+  "startedAt": "2026-08-20T14:00:00.000Z",
+  "completedAt": "2026-08-20T14:00:08.000Z",
+  "project": {
+    "commitment": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "gitCommit": "678ae58",
+    "packageManager": "pnpm@10.33.1",
+    "nodeVersion": "v22.18.0",
+    "sdkPackages": [
+      {
+        "name": "@0gfoundation/0g-compute-ts-sdk",
+        "version": "0.9.0"
+      },
+      {
+        "name": "@0gfoundation/0g-storage-ts-sdk",
+        "version": "0.3.5"
+      }
+    ]
+  },
+  "networks": {
+    "projectChain": {
+      "name": "0G Galileo Testnet",
+      "chainId": 16602,
+      "rpcHost": "evmrpc-testnet.0g.ai"
+    },
+    "anchorChain": {
+      "name": "0G Mainnet",
+      "chainId": 16661,
+      "rpcHost": "evmrpc.0g.ai"
+    },
+    "storage": {
+      "name": "0G Storage Testnet Turbo",
+      "rpcHost": "evmrpc-testnet.0g.ai",
+      "indexerHost": "indexer-storage-testnet-turbo.0g.ai"
+    },
+    "compute": {
+      "name": "0G Compute Testnet",
+      "rpcHost": "evmrpc-testnet.0g.ai",
+      "providerAddress": "0x2222222222222222222222222222222222222222"
+    }
+  },
+  "checks": {
+    "preflight": {
+      "state": "PASS",
+      "durationMs": 125,
+      "expectedChainId": 16602,
+      "observedChainId": 16602,
+      "walletAddress": "0x1111111111111111111111111111111111111111",
+      "errors": []
+    },
+    "storage": {
+      "state": "PASS",
+      "durationMs": 5500,
+      "rootHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "proofVerified": true,
+      "bytesMatched": true,
+      "retrievalReference": "0g-storage://0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "errors": []
+    },
+    "compute": {
+      "state": "VERIFIED",
+      "durationMs": 2250,
+      "providerAddress": "0x2222222222222222222222222222222222222222",
+      "responseId": "flightcheck-response-001",
+      "nonceCommitment": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "verificationResult": true,
+      "errors": []
+    }
+  },
+  "overallState": "VERIFIED",
+  "outcomeBitmap": 7,
+  "errors": []
+}

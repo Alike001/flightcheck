@@ -1,0 +1,512 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "toolVersion": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "runId": {
+      "$ref": "#/$defs/__schema2"
+    },
+    "runnerAddress": {
+      "$ref": "#/$defs/__schema3"
+    },
+    "startedAt": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "completedAt": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "project": {
+      "$ref": "#/$defs/__schema5"
+    },
+    "networks": {
+      "$ref": "#/$defs/__schema8"
+    },
+    "checks": {
+      "$ref": "#/$defs/__schema9"
+    },
+    "overallState": {
+      "$ref": "#/$defs/__schema24"
+    },
+    "outcomeBitmap": {
+      "$ref": "#/$defs/__schema25"
+    },
+    "errors": {
+      "$ref": "#/$defs/__schema26"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "toolVersion",
+    "runId",
+    "runnerAddress",
+    "startedAt",
+    "completedAt",
+    "project",
+    "networks",
+    "checks",
+    "overallState",
+    "outcomeBitmap",
+    "errors"
+  ],
+  "additionalProperties": false,
+  "title": "Flightcheck canonical report payload v1",
+  "description": "Sanitized evidence committed by a Flightcheck 0G mainnet report anchor.",
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "__schema1": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "__schema2": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "__schema3": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{40}$"
+    },
+    "__schema4": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "__schema5": {
+      "type": "object",
+      "properties": {
+        "commitment": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "gitCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,64}$"
+        },
+        "packageManager": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "nodeVersion": {
+          "type": "string",
+          "pattern": "^v?\\d+\\.\\d+\\.\\d+$"
+        },
+        "sdkPackages": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema7"
+          }
+        }
+      },
+      "required": [
+        "commitment",
+        "packageManager",
+        "nodeVersion",
+        "sdkPackages"
+      ],
+      "additionalProperties": false
+    },
+    "__schema6": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{64}$"
+    },
+    "__schema7": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "__schema8": {
+      "type": "object",
+      "properties": {
+        "projectChain": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "chainId": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "rpcHost": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          },
+          "required": [
+            "name",
+            "chainId",
+            "rpcHost"
+          ],
+          "additionalProperties": false
+        },
+        "anchorChain": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "chainId": {
+              "type": "number",
+              "const": 16661
+            },
+            "rpcHost": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          },
+          "required": [
+            "name",
+            "chainId",
+            "rpcHost"
+          ],
+          "additionalProperties": false
+        },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "rpcHost": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "indexerHost": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          },
+          "required": [
+            "name",
+            "rpcHost",
+            "indexerHost"
+          ],
+          "additionalProperties": false
+        },
+        "compute": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "rpcHost": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "providerAddress": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": [
+            "name",
+            "rpcHost",
+            "providerAddress"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "projectChain",
+        "anchorChain",
+        "storage",
+        "compute"
+      ],
+      "additionalProperties": false
+    },
+    "__schema9": {
+      "type": "object",
+      "properties": {
+        "preflight": {
+          "type": "object",
+          "properties": {
+            "durationMs": {
+              "$ref": "#/$defs/__schema10"
+            },
+            "errors": {
+              "$ref": "#/$defs/__schema11"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "NOT_RUN",
+                "RUNNING",
+                "PENDING",
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "expectedChainId": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "observedChainId": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "walletAddress": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": [
+            "durationMs",
+            "errors",
+            "state",
+            "expectedChainId"
+          ],
+          "additionalProperties": false
+        },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "durationMs": {
+              "$ref": "#/$defs/__schema10"
+            },
+            "errors": {
+              "$ref": "#/$defs/__schema11"
+            },
+            "state": {
+              "$ref": "#/$defs/__schema13"
+            },
+            "rootHash": {
+              "$ref": "#/$defs/__schema14"
+            },
+            "transactionHash": {
+              "$ref": "#/$defs/__schema15"
+            },
+            "proofVerified": {
+              "$ref": "#/$defs/__schema16"
+            },
+            "bytesMatched": {
+              "$ref": "#/$defs/__schema17"
+            },
+            "retrievalReference": {
+              "$ref": "#/$defs/__schema18"
+            }
+          },
+          "required": [
+            "durationMs",
+            "errors",
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        "compute": {
+          "type": "object",
+          "properties": {
+            "durationMs": {
+              "$ref": "#/$defs/__schema10"
+            },
+            "errors": {
+              "$ref": "#/$defs/__schema11"
+            },
+            "state": {
+              "$ref": "#/$defs/__schema19"
+            },
+            "providerAddress": {
+              "$ref": "#/$defs/__schema20"
+            },
+            "responseId": {
+              "$ref": "#/$defs/__schema21"
+            },
+            "nonceCommitment": {
+              "$ref": "#/$defs/__schema22"
+            },
+            "verificationResult": {
+              "$ref": "#/$defs/__schema23"
+            }
+          },
+          "required": [
+            "durationMs",
+            "errors",
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "preflight",
+        "storage",
+        "compute"
+      ],
+      "additionalProperties": false
+    },
+    "__schema10": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400000
+    },
+    "__schema11": {
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema12"
+      }
+    },
+    "__schema12": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,79}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "dependency": {
+          "type": "string",
+          "enum": [
+            "CONFIG",
+            "CHAIN",
+            "STORAGE",
+            "COMPUTE",
+            "REPORT_API",
+            "DATABASE",
+            "INDEXER",
+            "INTERNAL"
+          ]
+        },
+        "evidenceRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "dependency"
+      ],
+      "additionalProperties": false
+    },
+    "__schema13": {
+      "type": "string",
+      "enum": [
+        "NOT_RUN",
+        "RUNNING",
+        "PENDING",
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "__schema14": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "__schema15": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{64}$"
+    },
+    "__schema16": {
+      "type": "boolean"
+    },
+    "__schema17": {
+      "type": "boolean"
+    },
+    "__schema18": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "__schema19": {
+      "type": "string",
+      "enum": [
+        "NOT_RUN",
+        "RUNNING",
+        "PENDING",
+        "VERIFIED",
+        "UNVERIFIED",
+        "INVALID",
+        "FAIL"
+      ]
+    },
+    "__schema20": {
+      "$ref": "#/$defs/__schema3"
+    },
+    "__schema21": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "__schema22": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "__schema23": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "__schema24": {
+      "type": "string",
+      "enum": [
+        "VERIFIED",
+        "PENDING",
+        "UNVERIFIED",
+        "INVALID",
+        "FAIL"
+      ]
+    },
+    "__schema25": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 31
+    },
+    "__schema26": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema12"
+      }
+    }
+  },
+  "$id": "https://flightcheck.dev/schemas/flightcheck-report-v1.schema.json",
+  "$comment": "Cross-field evidence and outcome invariants are additionally enforced by the Flightcheck runtime validator."
+}

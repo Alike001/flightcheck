@@ -1,0 +1,27 @@
+{
+  "name": "flightcheck",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.1",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --recursive build",
+    "check": "pnpm typecheck && pnpm test",
+    "schema:check": "pnpm --filter @flightcheck/report schema:check",
+    "schema:write": "pnpm --filter @flightcheck/report schema:write",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "pnpm --recursive typecheck && tsc -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@vitest/coverage-v8": "4.1.11",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "typescript": "6.0.2",
+    "vitest": "4.1.11"
+  }
+}
