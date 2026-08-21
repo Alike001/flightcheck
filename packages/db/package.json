@@ -1,0 +1,28 @@
+{
+  "name": "@flightcheck/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "migrate": "node dist/migrate-cli.js",
+    "typecheck": "pnpm --filter @flightcheck/report build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@flightcheck/report": "workspace:*",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "ethers": "6.17.0"
+  }
+}
