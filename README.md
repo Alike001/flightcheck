@@ -88,8 +88,8 @@ runner ledger, configured provider, acknowledged TEE signer, model, and provider
 sub-account without allowing the SDK to sign or send a transaction. A ready
 provider returns the full sub-account balance as the hard onchain exposure
 ceiling and requires a separate `compute_inference` approval. Flightcheck then
-sends one 32-token nonce canary, persists its response ID before processing the
-body, and maps the SDK's exact `true`, `false`, or `null` verification result to
+sends one 128-token-capped nonce canary, persists its response ID before
+processing the body, and maps the SDK's exact `true`, `false`, or `null` result to
 `VERIFIED`, `INVALID`, or `UNVERIFIED`. An uncertain paid dispatch without a
 response ID is never retried automatically. Mainnet anchor proof remains
 pending. See `packages/cli/README.md` for the config shape and commands.
@@ -98,6 +98,6 @@ Machine-facing commands will use versioned JSON envelopes, stable error identifi
 
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, read-only Chain stage, and real Galileo Storage round trip are merged. Issue #12 contains the Direct Compute state machine, hard worker timeout, transaction-blocking SDK boundary, exact exposure approval, response-ID recovery, and deterministic verification mapping. A read-only Galileo run reaches the real `COMPUTE_LEDGER_MISSING` prerequisite without changing the runner nonce or balance. A funded Compute dispatch remains blocked because the dedicated wallet has about 0.499 OZG, below the SDK's 3 OZG ledger minimum. The indexer and public pages remain.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, read-only Chain stage, and real Galileo Storage round trip are merged. Issue #12 contains the Direct Compute state machine, hard worker timeout, transaction-blocking SDK boundary, exact exposure approval, response-ID recovery, and deterministic verification mapping. The funded Galileo ledger and provider account now exist. The first live response had valid TEE verification but exposed a real boundary bug: the 32-token cap truncated the 93-character canary after 33 completion tokens. After raising the cap to 128 tokens, a separately approved paid response returned the complete canary and the 0G SDK independently reported `VERIFIED`. No wallet transaction occurred during either inference request. The indexer and public pages remain.
 
 Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10), and Direct Compute verification in [issue #12](https://github.com/Alike001/flightcheck/issues/12). Each meaningful feature has a focused issue and tests before the next feature starts.

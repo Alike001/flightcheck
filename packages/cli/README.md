@@ -131,15 +131,17 @@ Flightcheck checks all of these conditions before requesting approval:
 - the provider declares an SDK-supported verification mode and model
 - the runner already has an acknowledged, funded sub-account for that provider
 
-SDK `0.9.0` requires 3 OZG to create a Compute ledger. Creating a provider
-sub-account requires a separate 1 OZG transfer. Flightcheck does not create or
-fund either prerequisite silently. It reports the missing prerequisite and
-stops. Each setup operation needs its own future quote and approval.
+SDK `0.9.0` applies client-side setup defaults of 3 OZG for ledger creation and
+1 OZG for provider funding. The current Galileo contracts expose lower onchain
+minimums, while the provider proxy still requires a 1 OZG locked reserve plus
+the current request fee. Flightcheck does not create or fund either prerequisite
+silently. It reports the missing prerequisite and stops. Each setup operation
+needs its own quote and approval.
 
 When the account is ready, Flightcheck returns `APPROVAL_REQUIRED` with the
 full provider sub-account balance as `maximumExposureWei`. The serving contract
 caps settlement at that balance, so this is the enforceable onchain loss
-ceiling. The 32-token output limit reduces expected cost but does not create a
+ceiling. The 128-token output limit reduces expected cost but does not create a
 per-request price cap.
 
 Authorize one Direct inference request with the exact reviewed ceiling:

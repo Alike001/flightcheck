@@ -37,7 +37,9 @@ export const COMPUTE_QUOTE_TTL_MS = 5 * 60 * 1_000;
 export const DEFAULT_COMPUTE_RPC_TIMEOUT_MS = 10_000;
 export const DEFAULT_COMPUTE_REQUEST_TIMEOUT_MS = 45_000;
 export const DEFAULT_COMPUTE_VERIFY_TIMEOUT_MS = 20_000;
-export const COMPUTE_MAX_OUTPUT_TOKENS = 32;
+// The full 256-bit canary used 33 tokens with the live Qwen provider. Keep
+// enough room for byte-level tokenization while retaining a small cost bound.
+export const COMPUTE_MAX_OUTPUT_TOKENS = 128;
 const COMPUTE_RUN_SCHEMA_VERSION = "1.0.0" as const;
 const COMPUTE_CANARY_KIND = "flightcheck-compute-canary" as const;
 
@@ -538,7 +540,7 @@ export async function probeComputeAccount(
       throw new ComputeQuoteError(
         "BLOCKED",
         "COMPUTE_LEDGER_MISSING",
-        "The runner has no funded 0G Compute ledger. SDK 0.9.0 requires 3 0G to create one.",
+        "The runner has no funded 0G Compute ledger. Creating one is a separate funded setup operation.",
       );
     }
     if (ledger.totalBalance <= 0n) {
@@ -622,7 +624,7 @@ export async function probeComputeAccount(
       throw new ComputeQuoteError(
         "BLOCKED",
         "COMPUTE_PROVIDER_ACCOUNT_MISSING",
-        "The runner has no inference sub-account for this provider. Creating one is a separate 1 0G funded operation.",
+        "The runner has no inference sub-account for this provider. Creating one is a separate funded setup operation.",
       );
     }
     if (!account.acknowledged) {

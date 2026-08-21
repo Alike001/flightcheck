@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   ComputeDispatchError,
+  COMPUTE_MAX_OUTPUT_TOKENS,
   ComputeQuoteError,
   ComputeRunStateSchema,
   TransactionBlockedError,
@@ -81,6 +82,14 @@ async function prepare(
 }
 
 describe("Direct 0G Compute state and spend boundary", () => {
+  it("keeps enough output budget for the complete 256-bit canary", () => {
+    const token = `flightcheck-compute-canary:0x${"12".repeat(32)}`;
+
+    expect(token.length).toBe(93);
+    expect(COMPUTE_MAX_OUTPUT_TOKENS).toBe(128);
+    expect(COMPUTE_MAX_OUTPUT_TOKENS).toBeGreaterThan(token.length);
+  });
+
   it("prepares a nonce-bearing canary and quotes the whole provider-account balance", async () => {
     const context = await readyContext();
     const result = await prepare(context);
