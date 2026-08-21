@@ -57,7 +57,7 @@ const DEFAULT_CLI_DEPENDENCIES: CliDependencies = {
   resume: resumeFlightcheck,
 };
 
-const USAGE = "Usage: flightcheck run [--cwd <project-directory>] [--json] | flightcheck resume --run-id <uuid> [--allow-operation storage_round_trip --maximum-spend-wei <wei>] [--observed-tx-hash <hash>] [--cwd <project-directory>] [--json]";
+const USAGE = "Usage: flightcheck run [--cwd <project-directory>] [--json] | flightcheck resume --run-id <uuid> [--allow-operation storage_round_trip|compute_inference --maximum-spend-wei <wei>] [--observed-tx-hash <hash>] [--cwd <project-directory>] [--json]";
 
 function parseCliArgs(args: readonly string[]) {
   return parseArgs({
@@ -124,11 +124,21 @@ function formatHuman(result: CommandResult): string {
     } else if (result.data.state === "READY_FOR_STORAGE") {
       lines.push("Chain preflight passed. Storage, Compute, and mainnet anchor operations still require explicit approval and may spend funds.");
     } else if (result.data.state === "APPROVAL_REQUIRED") {
-      lines.push("Storage quote prepared. Review the maximum spend and explicitly approve the Storage round trip before any transaction is sent.");
+      lines.push(
+        result.data.stage === "COMPUTE"
+          ? "Compute preflight passed. Review the full provider-account exposure and explicitly approve one Direct inference request."
+          : "Storage quote prepared. Review the maximum spend and explicitly approve the Storage round trip before any transaction is sent.",
+      );
     } else if (result.data.state === "AVAILABILITY_PENDING") {
       lines.push("The Storage transaction is recorded. Resume polls the same root without sending another transaction.");
     } else if (result.data.state === "PASS") {
       lines.push("Storage round trip verified by independent Merkle-root recomputation and exact byte comparison.");
+    } else if (result.data.state === "REQUEST_PENDING") {
+      lines.push("A Compute request may have been dispatched. Flightcheck will not send it again without a known response identifier.");
+    } else if (result.data.state === "VERIFICATION_PENDING") {
+      lines.push("The Compute response identifier is known. Resume retries verification only and never repeats the paid request.");
+    } else if (result.data.state === "VERIFIED") {
+      lines.push("The nonce-bearing Direct Compute response passed SDK verification.");
     }
   } else {
     for (const error of result.errors) {

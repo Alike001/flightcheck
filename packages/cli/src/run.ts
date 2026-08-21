@@ -9,6 +9,10 @@ import {
   type PreflightInput,
 } from "./preflight.js";
 import {
+  resumeComputeVerification,
+  type ComputeDependencies,
+} from "./compute.js";
+import {
   resumeStorageRoundTrip,
   runStoragePreparation,
   type StorageResumeInput,
@@ -39,6 +43,7 @@ export async function resumeFlightcheck(
   storageInput: StorageResumeInput,
   chainDependencies: Partial<ChainDependencies> = {},
   storageDependencies: Partial<StorageRoundTripDependencies> = {},
+  computeDependencies: Partial<ComputeDependencies> = {},
 ): Promise<CommandResult> {
   const preflight = await evaluatePreflight(input);
   if (!preflight.context) {
@@ -56,9 +61,20 @@ export async function resumeFlightcheck(
     };
   }
 
-  return resumeStorageRoundTrip(
+  const storage = await resumeStorageRoundTrip(
     preflight.context,
     storageInput,
     storageDependencies,
+  );
+  if (storage.status !== "SUCCESS" || storage.data.state !== "PASS") {
+    return storage;
+  }
+
+  return resumeComputeVerification(
+    preflight.context,
+    storageInput.runId,
+    storageInput.allowedOperations,
+    storageInput.maximumSpendWei,
+    computeDependencies,
   );
 }

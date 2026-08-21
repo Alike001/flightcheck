@@ -1,5 +1,6 @@
 export * from "./chain.js";
 export * from "./command.js";
+export * from "./compute.js";
 export * from "./config.js";
 export * from "./package-inspection.js";
 export * from "./preflight.js";
