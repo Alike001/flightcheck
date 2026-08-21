@@ -118,5 +118,64 @@ evidence because version 1.2.11 does not implement that check. Flightcheck
 requests it, then independently recomputes the downloaded Merkle root and
 compares the exact canary bytes before Storage becomes `PASS`.
 
+## Direct Compute verification
+
+After Storage reaches `PASS`, the same `resume` command starts a read-only
+Direct Compute preflight. The exact 0G Compute SDK version is pinned to `0.9.0`.
+Flightcheck checks all of these conditions before requesting approval:
+
+- the Compute RPC still reports the configured 0G chain
+- the runner already has a funded Compute ledger
+- the configured provider is registered as a chatbot service
+- the provider has an acknowledged, nonzero TEE signer
+- the provider declares an SDK-supported verification mode and model
+- the runner already has an acknowledged, funded sub-account for that provider
+
+SDK `0.9.0` applies client-side setup defaults of 3 OZG for ledger creation and
+1 OZG for provider funding. The current Galileo contracts expose lower onchain
+minimums, while the provider proxy still requires a 1 OZG locked reserve plus
+the current request fee. Flightcheck does not create or fund either prerequisite
+silently. It reports the missing prerequisite and stops. Each setup operation
+needs its own quote and approval.
+
+When the account is ready, Flightcheck returns `APPROVAL_REQUIRED` with the
+full provider sub-account balance as `maximumExposureWei`. The serving contract
+caps settlement at that balance, so this is the enforceable onchain loss
+ceiling. The 128-token output limit reduces expected cost but does not create a
+per-request price cap.
+
+Authorize one Direct inference request with the exact reviewed ceiling:
+
+```bash
+node packages/cli/dist/bin.js resume \
+  --cwd /path/to/project \
+  --run-id <runId> \
+  --allow-operation compute_inference \
+  --maximum-spend-wei <quotedMaximumExposureWei> \
+  --json
+```
+
+Flightcheck uses the SDK's public session-header processor with a wallet that
+can sign messages but rejects transaction signing and sending. It does not use
+the SDK helper that can auto-fund a provider account. The SDK runs in a
+terminable worker, so a slow broker, RPC, or provider cannot hold the CLI open
+past the hard operation timeout.
+
+The request asks the provider to echo a random nonce-bearing token exactly. The
+worker announces HTTP dispatch before sending and reports the response ID as
+soon as it appears in the `ZG-Res-Key` header or response body. The parent saves
+that ID before accepting completion. If dispatch may have occurred and no ID
+was saved, Flightcheck blocks automatic retry. If the ID is known, later
+`resume` calls retry verification only.
+
+SDK verification results are preserved without reinterpretation:
+
+- `true` becomes `VERIFIED` only when the returned content also matches the exact canary
+- `false` becomes `INVALID`
+- `null` becomes `UNVERIFIED`
+
+The provider URL, RPC URL, private key, authorization header, prompt nonce, and
+raw SDK errors never enter the public result envelope.
+
 The future published command is `npx @alike001/flightcheck run --json`. The
 package has not been published yet, so use the local command above for now.

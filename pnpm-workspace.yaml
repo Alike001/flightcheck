@@ -10,3 +10,5 @@ peerDependencyRules:
 
 overrides:
   "open-jsonrpc-provider>axios": "1.19.0"
+  "@ethersproject/providers>ws": "8.21.0"
+  "@0gfoundation/0g-compute-ts-sdk>adm-zip": "0.6.0"

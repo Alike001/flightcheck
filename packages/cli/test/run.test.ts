@@ -7,6 +7,7 @@ import {
   runFlightcheck,
   runStoragePreparation,
   type ChainDependencies,
+  type ComputeProbe,
   type ReadyPreflightContext,
   type StorageRunState,
 } from "../src/index.js";
@@ -20,6 +21,20 @@ const RUN_ID = "018f47a6-7b42-7c85-9f60-58ab3a2f8e10";
 const NOW = "2026-08-20T16:00:00.000Z";
 const FLOW_ADDRESS = `0x${"3".repeat(40)}`;
 const MARKET_ADDRESS = `0x${"4".repeat(40)}`;
+
+function readyComputeProbe(): ComputeProbe {
+  return {
+    chainId: 16602,
+    runnerAddress: new Wallet(TEST_SECRET).address.toLowerCase(),
+    providerAddress: `0x${"2".repeat(40)}`,
+    teeSignerAddress: `0x${"5".repeat(40)}`,
+    model: "flightcheck-model",
+    verifiability: "TeeML",
+    providerAccountBalanceWei: 1_000_000n,
+    providerAccountPendingRefundWei: 0n,
+    providerAccountLockedBalanceWei: 1_000_000n,
+  };
+}
 
 function passingChainDependencies(): Partial<ChainDependencies> {
   return {
@@ -124,9 +139,17 @@ describe("run orchestration", () => {
         sdkProofRequested: true,
       }),
       now: () => new Date(NOW),
+    }, {
+      probe: async () => readyComputeProbe(),
+      createNonce: () => `0x${"6".repeat(64)}`,
+      now: () => new Date(NOW),
     });
 
-    expect(result).toMatchObject({ command: "resume", status: "SUCCESS" });
+    expect(result).toMatchObject({
+      command: "resume",
+      status: "PENDING",
+      data: { stage: "COMPUTE", state: "APPROVAL_REQUIRED" },
+    });
     expect(upload).toHaveBeenCalledTimes(1);
   });
 });

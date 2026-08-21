@@ -45,7 +45,7 @@ Flightcheck verifies the declared 0G environment and its canonical protocol oper
 
 ## Workspace
 
-- `packages/cli`: deterministic project and Chain preflight, a no-spend Storage quote through `run`, and an explicitly authorized, spend-limited, resumable Storage upload and retrieval through `resume`. `verify` follows in a later slice.
+- `packages/cli`: deterministic project and Chain preflight, no-spend Storage and Direct Compute checks, and explicitly authorized, spend-limited, resumable live operations through `resume`. `verify` follows in a later slice.
 - `packages/report`: shared schema, canonicalization, hashing, signing, redaction, deterministic state reduction, and agent-readable command results.
 - `apps/web`: the landing page, report page, and versioned report API.
 - `apps/indexer`: idempotent and reorg-aware 0G mainnet event ingestion.
@@ -82,13 +82,22 @@ Flow and market contracts. The `run` path sends no transaction and stops at
 `storage_round_trip` allow-list entry and a sufficient maximum spend. It runs
 the pinned SDK behind a terminable worker, persists transaction evidence before
 returning, polls retrieval with bounded attempts, recomputes the downloaded 0G
-Merkle root, and compares exact bytes. Compute and mainnet anchor proof remain
+Merkle root, and compares exact bytes. After Storage passes, `resume` starts a
+read-only Direct Compute preflight in a hard-timeout worker. It checks the
+runner ledger, configured provider, acknowledged TEE signer, model, and provider
+sub-account without allowing the SDK to sign or send a transaction. A ready
+provider returns the full sub-account balance as the hard onchain exposure
+ceiling and requires a separate `compute_inference` approval. Flightcheck then
+sends one 128-token-capped nonce canary, persists its response ID before
+processing the body, and maps the SDK's exact `true`, `false`, or `null` result to
+`VERIFIED`, `INVALID`, or `UNVERIFIED`. An uncertain paid dispatch without a
+response ID is never retried automatically. Mainnet anchor proof remains
 pending. See `packages/cli/README.md` for the config shape and commands.
 
 Machine-facing commands will use versioned JSON envelopes, stable error identifiers, and documented exit codes. JSON output never grants permission to spend. Non-interactive funded operations must provide explicit permissions and enforceable spending limits.
 
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, and read-only Chain stage are merged. Issue #10 contains the complete Storage state machine, including the no-spend quote, explicit funded authorization, spend ceiling, worker isolation, confirmed-transaction recovery, no-spend segment repair, bounded retrieval, and independent byte and Merkle verification. A real Galileo run has uploaded and retrieved the same canary bytes and root on the feature branch. Compute, the indexer, and public pages remain.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, read-only Chain stage, and real Galileo Storage round trip are merged. Issue #12 contains the Direct Compute state machine, hard worker timeout, transaction-blocking SDK boundary, exact exposure approval, response-ID recovery, and deterministic verification mapping. The funded Galileo ledger and provider account now exist. The first live response had valid TEE verification but exposed a real boundary bug: the 32-token cap truncated the 93-character canary after 33 completion tokens. After raising the cap to 128 tokens, a separately approved paid response returned the complete canary and the 0G SDK independently reported `VERIFIED`. No wallet transaction occurred during either inference request. The indexer and public pages remain.
 
-Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), and the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10). Each meaningful feature has a focused issue and tests before the next feature starts.
+Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10), and Direct Compute verification in [issue #12](https://github.com/Alike001/flightcheck/issues/12). Each meaningful feature has a focused issue and tests before the next feature starts.

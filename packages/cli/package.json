@@ -16,6 +16,7 @@
     "typecheck": "pnpm --filter @flightcheck/report build && tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@0gfoundation/0g-compute-ts-sdk": "0.9.0",
     "@0gfoundation/0g-storage-ts-sdk": "1.2.11",
     "@flightcheck/report": "workspace:*",
     "esbuild": "0.27.2",

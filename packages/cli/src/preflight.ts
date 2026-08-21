@@ -66,6 +66,7 @@ export interface ReadyPreflightContext {
   anchorRpcUrl: string;
   storageRpcUrl: string;
   storageIndexerUrl: string;
+  computeRpcUrl: string;
   preflightData: PreflightData;
 }
 
@@ -361,12 +362,14 @@ export async function evaluatePreflight(
   const anchorRpcUrl = environment[config.environment.anchorRpcUrl];
   const storageRpcUrl = environment[config.environment.storageRpcUrl];
   const storageIndexerUrl = environment[config.environment.storageIndexerUrl];
+  const computeRpcUrl = environment[config.environment.computeRpcUrl];
   const privateKey = environment[config.environment.runnerPrivateKey];
   if (
     !projectRpcUrl ||
     !anchorRpcUrl ||
     !storageRpcUrl ||
     !storageIndexerUrl ||
+    !computeRpcUrl ||
     !privateKey
   ) {
     return { result };
@@ -383,6 +386,7 @@ export async function evaluatePreflight(
       anchorRpcUrl,
       storageRpcUrl,
       storageIndexerUrl,
+      computeRpcUrl,
       preflightData: data,
     },
   };
