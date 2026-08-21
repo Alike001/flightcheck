@@ -14,6 +14,7 @@ import {
   AnchorQuoteError,
   AnchorRecoveryError,
   ReportFinalizationError,
+  ReportPublicationError,
   ReportAnchorStateSchema,
   buildReportPayload,
   computeStorageRoot,
@@ -215,6 +216,11 @@ function dependencies(
   return {
     now: () => new Date(NOW),
     readProjectEvidence: async () => projectEvidence(),
+    publish: async (context, state) => ({
+      reportHash: state.reportHash,
+      reportUrl: new URL(`/reports/${state.reportHash}`, context.reportApiUrl).toString(),
+      publishedAt: NOW,
+    }),
     quote: async (_context, state) => fixedQuote(state),
     dispatch: async (_context, state, _quote, onTransactionHash) => {
       await onTransactionHash(TX_HASH);
@@ -396,8 +402,9 @@ describe("canonical report finalization", () => {
       .rejects.toMatchObject({ code: "REPORT_STATE_INVALID" });
   });
 
-  it("requires publication of the exact finalized hash before anchor quoting", async () => {
+  it("publishes the exact finalized hash before anchor quoting", async () => {
     const { context, chain, state } = await preparedReport();
+    const publish = vi.fn(dependencies().publish as AnchorDependencies["publish"]);
     const quote = vi.fn(async (_context, current: ReportAnchorState) => fixedQuote(current));
     const pending = await resumeReportAnchor(
       context,
@@ -405,15 +412,22 @@ describe("canonical report finalization", () => {
       chain,
       [],
       undefined,
-      dependencies({ quote }),
+      dependencies({ publish, quote }),
     );
 
     expect(pending).toMatchObject({
       status: "PENDING",
       reportHash: state.reportHash,
-      data: { stage: "REPORT", state: "REPORT_READY_FOR_PUBLICATION" },
+      data: {
+        stage: "REPORT",
+        state: "APPROVAL_REQUIRED",
+        report: {
+          reportUrl: `https://flightcheck.example/reports/${state.reportHash}`,
+        },
+      },
     });
-    expect(quote).not.toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(quote).toHaveBeenCalledTimes(1);
 
     await expect(recordReportPublication(
       context.projectDirectory,
@@ -448,6 +462,64 @@ describe("canonical report finalization", () => {
       "https://flightcheck.example/reports/conflict",
       new Date(EXPIRES_AT),
     )).rejects.toMatchObject({ code: "REPORT_PUBLICATION_CONFLICT" });
+  });
+
+  it("maps unavailable and conflicting publication outcomes without quoting", async () => {
+    const unavailableSetup = await preparedReport();
+    const unavailableQuote = vi.fn(dependencies().quote as AnchorDependencies["quote"]);
+    const unavailable = await resumeReportAnchor(
+      unavailableSetup.context,
+      RUN_ID,
+      unavailableSetup.chain,
+      [],
+      undefined,
+      dependencies({
+        publish: async () => {
+          throw new ReportPublicationError(
+            "UNAVAILABLE",
+            "REPORT_API_TIMEOUT",
+            "The report API did not respond before the operation deadline.",
+          );
+        },
+        quote: unavailableQuote,
+      }),
+    );
+    expect(unavailable).toMatchObject({
+      status: "PENDING",
+      data: { state: "UNAVAILABLE" },
+      errors: [{ code: "REPORT_API_TIMEOUT", dependency: "REPORT_API", retryable: true }],
+    });
+    expect(unavailableQuote).not.toHaveBeenCalled();
+
+    const blockedSetup = await preparedReport();
+    const blockedQuote = vi.fn(dependencies().quote as AnchorDependencies["quote"]);
+    const blocked = await resumeReportAnchor(
+      blockedSetup.context,
+      RUN_ID,
+      blockedSetup.chain,
+      [],
+      undefined,
+      dependencies({
+        publish: async () => {
+          throw new ReportPublicationError(
+            "BLOCKED",
+            "REPORT_PUBLICATION_MISMATCH",
+            "The report API response does not match the finalized signed report.",
+          );
+        },
+        quote: blockedQuote,
+      }),
+    );
+    expect(blocked).toMatchObject({
+      status: "VERIFICATION_FAILED",
+      data: { state: "BLOCKED" },
+      errors: [{
+        code: "REPORT_PUBLICATION_MISMATCH",
+        dependency: "REPORT_API",
+        retryable: false,
+      }],
+    });
+    expect(blockedQuote).not.toHaveBeenCalled();
   });
 
   it("returns a structured verification failure when completed evidence can't finalize", async () => {

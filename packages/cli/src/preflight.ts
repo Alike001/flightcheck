@@ -67,6 +67,7 @@ export interface ReadyPreflightContext {
   storageRpcUrl: string;
   storageIndexerUrl: string;
   computeRpcUrl: string;
+  reportApiUrl: string;
   preflightData: PreflightData;
 }
 
@@ -246,6 +247,20 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+function isHttpOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && !url.username
+      && !url.password
+      && url.pathname === "/"
+      && !url.search
+      && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
 function checkEnvironment(
   output: MutablePreflight,
   config: FlightcheckConfig,
@@ -257,6 +272,7 @@ function checkEnvironment(
     "storageRpcUrl",
     "storageIndexerUrl",
     "computeRpcUrl",
+    "reportApiUrl",
   ]);
 
   for (const [field, variableName] of Object.entries(config.environment) as [
@@ -278,6 +294,15 @@ function checkEnvironment(
         output,
         "PREFLIGHT_ENDPOINT_INVALID",
         `Environment variable ${variableName} must contain an HTTP or HTTPS URL.`,
+      );
+      continue;
+    }
+
+    if (field === "reportApiUrl" && !isHttpOrigin(value)) {
+      addFailure(
+        output,
+        "PREFLIGHT_ENDPOINT_INVALID",
+        `Environment variable ${variableName} must contain an HTTP origin without credentials, path, query, or fragment.`,
       );
       continue;
     }
@@ -363,6 +388,7 @@ export async function evaluatePreflight(
   const storageRpcUrl = environment[config.environment.storageRpcUrl];
   const storageIndexerUrl = environment[config.environment.storageIndexerUrl];
   const computeRpcUrl = environment[config.environment.computeRpcUrl];
+  const reportApiUrl = environment[config.environment.reportApiUrl];
   const privateKey = environment[config.environment.runnerPrivateKey];
   if (
     !projectRpcUrl ||
@@ -370,6 +396,7 @@ export async function evaluatePreflight(
     !storageRpcUrl ||
     !storageIndexerUrl ||
     !computeRpcUrl ||
+    !reportApiUrl ||
     !privateKey
   ) {
     return { result };
@@ -387,6 +414,7 @@ export async function evaluatePreflight(
       storageRpcUrl,
       storageIndexerUrl,
       computeRpcUrl,
+      reportApiUrl: new URL(reportApiUrl).origin,
       preflightData: data,
     },
   };

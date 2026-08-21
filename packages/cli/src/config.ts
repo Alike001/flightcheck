@@ -49,6 +49,7 @@ export const FlightcheckConfigSchema = z.strictObject({
     storageRpcUrl: EnvironmentVariableNameSchema,
     storageIndexerUrl: EnvironmentVariableNameSchema,
     computeRpcUrl: EnvironmentVariableNameSchema,
+    reportApiUrl: EnvironmentVariableNameSchema,
     runnerPrivateKey: EnvironmentVariableNameSchema,
   }),
 });

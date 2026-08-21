@@ -169,7 +169,7 @@ describe("deterministic project preflight", () => {
       nodeVersion: "v22.1.0",
     });
 
-    expect(errorCodes(result).filter((code) => code === "PREFLIGHT_ENV_MISSING")).toHaveLength(6);
+    expect(errorCodes(result).filter((code) => code === "PREFLIGHT_ENV_MISSING")).toHaveLength(7);
     expect(JSON.stringify(result)).not.toContain(TEST_SECRET);
   });
 
@@ -193,6 +193,23 @@ describe("deterministic project preflight", () => {
     );
     expect(JSON.stringify(result)).not.toContain(badEndpoint);
     expect(JSON.stringify(result)).not.toContain(badKey);
+  });
+
+  it("requires the report API endpoint to be an origin", async () => {
+    const directory = await createProjectFixture();
+    const unsafeEndpoint = "https://user:secret@flightcheck.example/private?token=hidden";
+
+    const result = await runPreflight({
+      projectDirectory: directory,
+      environment: {
+        ...VALID_ENVIRONMENT,
+        TEST_REPORT_API_URL: unsafeEndpoint,
+      },
+      nodeVersion: "v22.1.0",
+    });
+
+    expect(errorCodes(result)).toContain("PREFLIGHT_ENDPOINT_INVALID");
+    expect(JSON.stringify(result)).not.toContain(unsafeEndpoint);
   });
 
   it("rejects the zero private key before live work", async () => {

@@ -227,6 +227,39 @@ describe("CLI command boundary", () => {
     expect(stderr).toContain("same root without sending another transaction");
   });
 
+  it("explains the mainnet anchor boundary after exact report publication", async () => {
+    let stderr = "";
+    const resume = async () => ({
+      schemaVersion: "1.0.0" as const,
+      command: "resume" as const,
+      status: "PENDING" as const,
+      exitCode: 4 as const,
+      runId: "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+      data: {
+        stage: "REPORT",
+        state: "APPROVAL_REQUIRED",
+        checks: [{ status: "PENDING", message: "Mainnet approval is required." }],
+      },
+      errors: [],
+    });
+
+    const exitCode = await executeCli([
+      "resume",
+      "--run-id",
+      "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+    ], {
+      stdout: () => undefined,
+      stderr: (text) => {
+        stderr += text;
+      },
+    }, { resume });
+
+    expect(exitCode).toBe(4);
+    expect(stderr).toContain("Report publication passed exact readback.");
+    expect(stderr).toContain("approve one anchor transaction");
+    expect(stderr).not.toContain("Storage quote prepared");
+  });
+
   it("keeps human diagnostics on stderr for an incomplete run", async () => {
     const directory = await createProjectFixture();
     let stdout = "";

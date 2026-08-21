@@ -37,6 +37,7 @@ names in the file, never credentials or private keys.
     "storageRpcUrl": "OG_STORAGE_RPC_URL",
     "storageIndexerUrl": "OG_STORAGE_INDEXER_URL",
     "computeRpcUrl": "OG_COMPUTE_RPC_URL",
+    "reportApiUrl": "FLIGHTCHECK_REPORT_API_URL",
     "runnerPrivateKey": "FLIGHTCHECK_RUNNER_PRIVATE_KEY"
   }
 }
@@ -187,11 +188,15 @@ outcome bitmap, computes the canonical report hash, signs the payload with the
 runner's EIP-712 key, verifies the recovered signer, and atomically writes
 `.flightcheck/runs/<runId>.report.json` with mode `0600`.
 
-The command then returns `REPORT_READY_FOR_PUBLICATION`. It does not quote or
-send the mainnet transaction until the report API has accepted that same hash
-and a matching public report URL has been recorded locally. Publication records
-are immutable. Retrying the exact same hash and URL is idempotent, while a
-different URL is rejected.
+The CLI reads the report-service origin from the environment variable named by
+`environment.reportApiUrl`. It checks `GET /api/v1/reports/[reportHash]` first,
+publishes exactly `{ payload, signature }` only when the report is absent, then
+requires exact public GET readback before recording the URL locally.
+Publication records are immutable. Retrying the exact report is idempotent,
+while a changed payload, signature, hash, URL, publication time, or anchor state
+is rejected. Redirects and oversized responses are blocked. A timeout remains
+pending, and the next `resume` recovers through GET before deciding whether an
+exact POST retry is safe.
 
 Once publication exists, Flightcheck reads the configured registry bytecode,
 checks `isAnchored`, estimates `anchorReport(reportHash, outcomeBitmap)`, adds a
@@ -210,9 +215,10 @@ runner, and outcome bitmap. EIP-1559 RPC normalization is accepted only when the
 observed hard fee cap equals the approved quote and the priority fee doesn't
 exceed it.
 
-The report API is the next implementation slice. Until it exists, a real run
-correctly stops at `REPORT_READY_FOR_PUBLICATION`, and no 0G mainnet anchor is
-sent.
+After exact readback, the same invocation may prepare a mainnet quote. It still
+cannot send a transaction without a later invocation that approves
+`mainnet_anchor` as the only funded operation and supplies the exact maximum
+spend. No report-service request grants permission to spend onchain funds.
 
 The future published command is `npx @alike001/flightcheck run --json`. The
 package has not been published yet, so use the local command above for now.

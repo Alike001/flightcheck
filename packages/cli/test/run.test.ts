@@ -9,7 +9,6 @@ import {
   runStoragePreparation,
   writeComputeRunState,
   writeStorageRunState,
-  type AnchorDependencies,
   type ChainDependencies,
   type ComputeProbe,
   type ReadyPreflightContext,
@@ -245,7 +244,19 @@ describe("run orchestration", () => {
         checkedAt: "2026-08-20T15:59:55.000Z",
       },
     });
-    const quote = vi.fn<AnchorDependencies["quote"]>();
+    const quote = vi.fn(async (_context, state) => ({
+      chainId: 16661 as const,
+      registryAddress: `0x${"1".repeat(40)}`,
+      runnerAddress: state.runnerAddress,
+      reportHash: state.reportHash,
+      outcomeBitmap: state.payload.outcomeBitmap,
+      gasPriceWei: "4000000000",
+      gasLimit: "60000",
+      nonce: 3,
+      maximumSpendWei: "240000000000000",
+      quotedAt: NOW,
+      expiresAt: "2026-08-20T16:05:00.000Z",
+    }));
     const result = await resumeFlightcheck({
       projectDirectory: directory,
       environment: VALID_ENVIRONMENT,
@@ -264,14 +275,28 @@ describe("run orchestration", () => {
           { name: "@0gfoundation/0g-storage-ts-sdk", version: "1.2.11" },
         ],
       }),
+      publish: async (publicationContext, state) => ({
+        reportHash: state.reportHash,
+        reportUrl: new URL(
+          `/reports/${state.reportHash}`,
+          publicationContext.reportApiUrl,
+        ).toString(),
+        publishedAt: NOW,
+      }),
       quote,
     });
 
     expect(result).toMatchObject({
       command: "resume",
       status: "PENDING",
-      data: { stage: "REPORT", state: "REPORT_READY_FOR_PUBLICATION" },
+      data: {
+        stage: "REPORT",
+        state: "APPROVAL_REQUIRED",
+        report: {
+          reportUrl: expect.stringMatching(/^https:\/\/flightcheck\.example\/reports\/0x[0-9a-f]{64}$/),
+        },
+      },
     });
-    expect(quote).not.toHaveBeenCalled();
+    expect(quote).toHaveBeenCalledTimes(1);
   });
 });

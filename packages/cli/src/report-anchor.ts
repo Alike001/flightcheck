@@ -50,6 +50,11 @@ import {
   storageRunStatePath,
   type StorageRunState,
 } from "./storage.js";
+import {
+  publishFinalizedReport,
+  ReportPublicationError,
+  type ReportPublicationEvidence,
+} from "./report-publication.js";
 
 export const REPORT_RUN_SCHEMA_VERSION = "1.0.0" as const;
 export const FLIGHTCHECK_TOOL_VERSION = "0.1.0" as const;
@@ -177,6 +182,10 @@ export interface AnchorDependencies {
   readProjectEvidence: (
     context: ReadyPreflightContext,
   ) => Promise<ProjectEvidence>;
+  publish: (
+    context: ReadyPreflightContext,
+    state: ReportAnchorState,
+  ) => Promise<ReportPublicationEvidence>;
   quote: (
     context: ReadyPreflightContext,
     state: ReportAnchorState,
@@ -576,6 +585,7 @@ export async function recordReportPublication(
   reportHash: string,
   reportUrl: string,
   now: Date = new Date(),
+  publishedAt: string = now.toISOString(),
 ): Promise<ReportAnchorState> {
   const state = await readReportAnchorState(
     reportAnchorStatePath(projectDirectory, runId),
@@ -611,7 +621,7 @@ export async function recordReportPublication(
     publication: {
       reportHash: state.reportHash,
       reportUrl,
-      publishedAt: now.toISOString(),
+      publishedAt,
     },
     quote: undefined,
     authorization: undefined,
@@ -703,6 +713,7 @@ function quoteEquals(left: AnchorQuote, right: AnchorQuote): boolean {
 const DEFAULT_ANCHOR_DEPENDENCIES: AnchorDependencies = {
   now: () => new Date(),
   readProjectEvidence,
+  publish: async (context, state) => publishFinalizedReport(context, state),
   /* v8 ignore start -- dynamic live-adapter routing is exercised by the local-chain integration test */
   quote: async (...args) => {
     const { quoteMainnetAnchor } = await import("./report-anchor-live.js");
@@ -816,6 +827,35 @@ function finalizationFailureResult(
   };
 }
 
+function publicationFailureResult(
+  context: ReadyPreflightContext,
+  state: ReportAnchorState,
+  failure: ReportPublicationError,
+): CommandResult {
+  const unavailable = failure.kind === "UNAVAILABLE";
+  return reportResult(
+    unavailable ? "PENDING" : "VERIFICATION_FAILED",
+    state,
+    reportData(
+      context,
+      state,
+      unavailable ? "UNAVAILABLE" : "BLOCKED",
+      [reportCheck(
+        failure.code,
+        unavailable ? "PENDING" : "FAIL",
+        failure.message,
+      )],
+      false,
+    ),
+    [reportError(
+      failure.code,
+      failure.message,
+      unavailable,
+      "REPORT_API",
+    )],
+  );
+}
+
 export async function resumeReportAnchor(
   context: ReadyPreflightContext,
   runId: string,
@@ -909,17 +949,26 @@ export async function resumeReportAnchor(
     }
   }
   if (!state.publication) {
-    return reportResult(
-      "PENDING",
-      state,
-      reportData(context, state, "REPORT_READY_FOR_PUBLICATION", [
-        reportCheck(
-          "REPORT_FINALIZED",
-          "PASS",
-          "The canonical report is signed and ready for the report API. Anchoring stays blocked until publication is recorded.",
-        ),
-      ], false),
-    );
+    try {
+      const publication = await dependencies.publish(context, state);
+      state = await recordReportPublication(
+        context.projectDirectory,
+        state.runId,
+        publication.reportHash,
+        publication.reportUrl,
+        dependencies.now(),
+        publication.publishedAt,
+      );
+    } catch (error) {
+      const failure = error instanceof ReportPublicationError
+        ? error
+        : new ReportPublicationError(
+            "UNAVAILABLE",
+            "REPORT_API_UNAVAILABLE",
+            "The finalized report could not be published or read back safely.",
+          );
+      return publicationFailureResult(context, state, failure);
+    }
   }
   let freshQuote: AnchorQuote;
   try {

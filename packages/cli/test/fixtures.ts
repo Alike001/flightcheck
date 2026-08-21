@@ -12,6 +12,7 @@ export const VALID_ENVIRONMENT: NodeJS.ProcessEnv = {
   TEST_STORAGE_RPC_URL: "https://rpc.storage.example",
   TEST_STORAGE_INDEXER_URL: "https://indexer.storage.example",
   TEST_COMPUTE_RPC_URL: "https://rpc.compute.example",
+  TEST_REPORT_API_URL: "https://flightcheck.example",
   TEST_RUNNER_PRIVATE_KEY: TEST_SECRET,
 };
 
@@ -40,6 +41,7 @@ export function validConfig(): FlightcheckConfig {
       storageRpcUrl: "TEST_STORAGE_RPC_URL",
       storageIndexerUrl: "TEST_STORAGE_INDEXER_URL",
       computeRpcUrl: "TEST_COMPUTE_RPC_URL",
+      reportApiUrl: "TEST_REPORT_API_URL",
       runnerPrivateKey: "TEST_RUNNER_PRIVATE_KEY",
     },
   };

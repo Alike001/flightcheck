@@ -57,7 +57,7 @@ const DEFAULT_CLI_DEPENDENCIES: CliDependencies = {
   resume: resumeFlightcheck,
 };
 
-const USAGE = "Usage: flightcheck run [--cwd <project-directory>] [--json] | flightcheck resume --run-id <uuid> [--allow-operation storage_round_trip|compute_inference --maximum-spend-wei <wei>] [--observed-tx-hash <hash>] [--cwd <project-directory>] [--json]";
+const USAGE = "Usage: flightcheck run [--cwd <project-directory>] [--json] | flightcheck resume --run-id <uuid> [--allow-operation storage_round_trip|compute_inference|mainnet_anchor --maximum-spend-wei <wei>] [--observed-tx-hash <hash>] [--cwd <project-directory>] [--json]";
 
 function parseCliArgs(args: readonly string[]) {
   return parseArgs({
@@ -127,6 +127,8 @@ function formatHuman(result: CommandResult): string {
       lines.push(
         result.data.stage === "COMPUTE"
           ? "Compute preflight passed. Review the full provider-account exposure and explicitly approve one Direct inference request."
+          : result.data.stage === "REPORT"
+            ? "Report publication passed exact readback. Review the mainnet anchor quote and explicitly approve one anchor transaction."
           : "Storage quote prepared. Review the maximum spend and explicitly approve the Storage round trip before any transaction is sent.",
       );
     } else if (result.data.state === "AVAILABILITY_PENDING") {
