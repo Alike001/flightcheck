@@ -1,13 +1,16 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import { AbiCoder, Wallet, id } from "ethers";
+import { MemData, getFlowContract } from "@0gfoundation/0g-storage-ts-sdk";
+import { AbiCoder, Interface, Wallet, id } from "ethers";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   STORAGE_GAS_MARGIN_BPS,
   STORAGE_QUOTE_TTL_MS,
   StorageQuoteError,
+  StorageRunStateSchema,
+  StorageTransactionRecoveryError,
   computeStorageRoot,
   createEthersStorageChainQuote,
   createEthersStorageQuoteProvider,
@@ -21,12 +24,14 @@ import {
   resumeStorageRoundTrip,
   runStoragePreparation,
   storageRunStatePath,
+  verifyRecoveredStorageTransaction,
   writeStorageRunState,
   StorageWorkerFailure,
   type ReadyPreflightContext,
   type StorageQuote,
   type StorageResumeInput,
   type StorageRunState,
+  type StorageTransactionEvidence,
 } from "../src/index.js";
 import {
   TEST_SECRET,
@@ -417,6 +422,10 @@ describe("authorized resumable 0G Storage round trip", () => {
     }, {
       upload,
       download,
+      repairUpload: async () => ({
+        rootHash: initial.canary.rootHash,
+        txSeq: 19,
+      }),
       now: () => new Date(QUOTED_AT),
     });
     expect(second.status).toBe("SUCCESS");
@@ -426,7 +435,7 @@ describe("authorized resumable 0G Storage round trip", () => {
 
   it("blocks automatic retry when dispatch could have happened without a recorded hash", async () => {
     const context = await readyContext();
-    await persistApprovalRequired(context);
+    const initial = await persistApprovalRequired(context);
     const upload = vi.fn(async () => {
       throw new StorageWorkerFailure("STORAGE_WORKER_TIMEOUT");
     });
@@ -449,6 +458,174 @@ describe("authorized resumable 0G Storage round trip", () => {
       errors: [{ code: "STORAGE_TX_UNKNOWN_AFTER_DISPATCH", retryable: false }],
     });
     expect(upload).toHaveBeenCalledTimes(1);
+
+    const transactionHash = `0x${"a".repeat(64)}`;
+    const reconcileTransaction = vi.fn(async () => undefined);
+    const download = vi.fn(async () => ({
+      bytes: Uint8Array.from(Buffer.from(initial.canary.bytesBase64, "base64")),
+      sdkProofRequested: true as const,
+    }));
+    const recovered = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+      observedTransactionHash: transactionHash,
+    }, {
+      upload,
+      download,
+      reconcileTransaction,
+      repairUpload: async () => ({
+        rootHash: initial.canary.rootHash,
+        txSeq: 19,
+      }),
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(recovered).toMatchObject({
+      status: "SUCCESS",
+      data: {
+        state: "PASS",
+        storage: { txHash: transactionHash },
+      },
+    });
+    expect(reconcileTransaction).toHaveBeenCalledWith(
+      context,
+      expect.objectContaining({ state: "UPLOAD_TX_UNKNOWN_AFTER_DISPATCH" }),
+      transactionHash,
+    );
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers only an exact confirmed transaction within the approved ceiling", async () => {
+    const context = await readyContext();
+    const initial = await persistApprovalRequired(context);
+    const state = StorageRunStateSchema.parse({
+      ...initial,
+      state: "UPLOAD_TX_UNKNOWN_AFTER_DISPATCH",
+      authorization: {
+        maximumSpendWei: "50500",
+        approvedAt: QUOTED_AT,
+      },
+      errorCode: "STORAGE_TX_UNKNOWN_AFTER_DISPATCH",
+    });
+    const bytes = Uint8Array.from(Buffer.from(state.canary.bytesBase64, "base64"));
+    const file = new MemData(bytes);
+    const wallet = new Wallet(TEST_SECRET);
+    const [submission, submissionError] = await file.createSubmission(
+      "0x",
+      wallet.address,
+    );
+    expect(submissionError).toBeNull();
+    expect(submission).not.toBeNull();
+    const flow = getFlowContract(
+      FLOW_ADDRESS,
+      wallet as unknown as Parameters<typeof getFlowContract>[1],
+    );
+    const flowInterface = flow.interface as unknown as Interface;
+    const transactionHash = `0x${"b".repeat(64)}`;
+    const evidence: StorageTransactionEvidence = {
+      hash: transactionHash,
+      from: state.runnerAddress,
+      to: FLOW_ADDRESS,
+      nonce: 7,
+      chainId: 16602n,
+      value: 100n,
+      gasPrice: 2n,
+      gasLimit: 25_200n,
+      data: flowInterface.encodeFunctionData("submit", [submission]).toLowerCase(),
+      blockHash: `0x${"c".repeat(64)}`,
+      receiptStatus: 1,
+    };
+
+    await expect(verifyRecoveredStorageTransaction(
+      context,
+      state,
+      transactionHash,
+      async () => evidence,
+    )).resolves.toBeUndefined();
+
+    await expect(verifyRecoveredStorageTransaction(
+      context,
+      state,
+      transactionHash,
+      async () => ({ ...evidence, value: 101n }),
+    )).rejects.toEqual(new StorageTransactionRecoveryError(
+      "VERIFICATION",
+      "STORAGE_TRANSACTION_RECOVERY_MISMATCH",
+      "The supplied transaction does not match the authorized Storage submission.",
+    ));
+
+    await expect(verifyRecoveredStorageTransaction(
+      context,
+      state,
+      transactionHash,
+      async () => undefined,
+    )).rejects.toMatchObject({
+      kind: "UNAVAILABLE",
+      code: "STORAGE_TRANSACTION_RECOVERY_UNAVAILABLE",
+    });
+  });
+
+  it("keeps confirmed transactions pending when no-spend segment repair fails", async () => {
+    const context = await readyContext();
+    const initial = await persistApprovalRequired(context);
+    const transactionHash = `0x${"d".repeat(64)}`;
+    await writeStorageRunState(context.projectDirectory, StorageRunStateSchema.parse({
+      ...initial,
+      state: "UPLOAD_SUBMITTED",
+      authorization: {
+        maximumSpendWei: "50500",
+        approvedAt: QUOTED_AT,
+      },
+      upload: {
+        rootHash: initial.canary.rootHash,
+        txHash: transactionHash,
+        reusedExisting: false,
+        submittedAt: QUOTED_AT,
+      },
+    }));
+    const download = vi.fn();
+
+    const result = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+    }, {
+      repairUpload: async () => {
+        throw new Error("internal detail must not leak");
+      },
+      download,
+      now: () => new Date(QUOTED_AT),
+    });
+
+    expect(result).toMatchObject({
+      status: "PENDING",
+      data: {
+        state: "AVAILABILITY_PENDING",
+        storage: { txHash: transactionHash },
+      },
+      errors: [{
+        code: "STORAGE_RECOVERY_UPLOAD_INCOMPLETE",
+        retryable: true,
+      }],
+    });
+    expect(JSON.stringify(result)).not.toContain("internal detail");
+    expect(download).not.toHaveBeenCalled();
+
+    const mismatchedRoot = await resumeStorageRoundTrip(context, {
+      runId: RUN_ID,
+      allowedOperations: [],
+    }, {
+      repairUpload: async () => ({
+        rootHash: `0x${"e".repeat(64)}`,
+        txSeq: 19,
+      }),
+      download,
+      now: () => new Date(QUOTED_AT),
+    });
+    expect(mismatchedRoot).toMatchObject({
+      status: "PENDING",
+      errors: [{ code: "STORAGE_UPLOAD_ROOT_MISMATCH", retryable: true }],
+    });
+    expect(download).not.toHaveBeenCalled();
   });
 
   it("requires a fresh quote after a known pre-dispatch nonce change", async () => {
@@ -685,6 +862,31 @@ describe("authorized resumable 0G Storage round trip", () => {
 });
 
 describe("read-only 0G Storage quote", () => {
+  it("accepts the live indexer's null discovered-node field", async () => {
+    const context = await readyContext();
+    const state = await preparedState(context);
+
+    const quote = await quoteStorageUpload(context, state, {
+      jsonRpcRequest: async (_url, method) => method === "indexer_getShardedNodes"
+        ? {
+            ...(storageRpcResult(method) as object),
+            discovered: null,
+          }
+        : storageRpcResult(method),
+      chainProbe: async () => ({
+        runnerAddress: new Wallet(TEST_SECRET).address,
+        marketAddress: MARKET_ADDRESS,
+        storageFeeWei: 100n,
+        gasPriceWei: 2n,
+        estimatedGas: 101n,
+        nonce: 7,
+      }),
+      now: () => new Date(QUOTED_AT),
+    });
+
+    expect(quote.maximumSpendWei).toBe("344");
+  });
+
   it("selects trusted coverage and computes the exact fee plus a 20 percent gas margin", async () => {
     const context = await readyContext();
     const state = await preparedState(context);

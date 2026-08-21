@@ -114,6 +114,7 @@ export const StorageRunStateSchema = z.strictObject({
     txSeq: z.number().int().nonnegative().optional(),
     reusedExisting: z.boolean(),
     submittedAt: IsoDateSchema.optional(),
+    segmentsConfirmedAt: IsoDateSchema.optional(),
   }).optional(),
   retrieval: z.strictObject({
     attempts: z.number().int().nonnegative(),
@@ -158,6 +159,7 @@ export const StorageResumeInputSchema = z.strictObject({
     "mainnet_anchor",
   ])),
   maximumSpendWei: DecimalBigIntSchema.optional(),
+  observedTransactionHash: TransactionHashSchema.optional(),
 });
 
 export type StorageResumeInput = z.infer<typeof StorageResumeInputSchema>;
@@ -204,7 +206,7 @@ const ShardedNodeSchema = z.object({
 
 const ShardedNodesSchema = z.object({
   trusted: z.array(ShardedNodeSchema).min(1),
-  discovered: z.array(ShardedNodeSchema).optional(),
+  discovered: z.array(ShardedNodeSchema).nullable().optional(),
 });
 
 const StorageNodeStatusSchema = z.object({
@@ -821,6 +823,11 @@ export interface StorageUploadResult {
   reusedExisting: boolean;
 }
 
+export interface StorageRepairResult {
+  rootHash: string;
+  txSeq: number;
+}
+
 export interface StorageRoundTripDependencies {
   quote: (
     context: ReadyPreflightContext,
@@ -836,12 +843,57 @@ export interface StorageRoundTripDependencies {
     state: StorageRunState,
     timeoutMs: number,
   ) => Promise<{ bytes: Uint8Array; sdkProofRequested: true }>;
+  reconcileTransaction: (
+    context: ReadyPreflightContext,
+    state: StorageRunState,
+    transactionHash: string,
+  ) => Promise<void>;
+  repairUpload: (
+    context: ReadyPreflightContext,
+    state: StorageRunState,
+    timeoutMs: number,
+  ) => Promise<StorageRepairResult>;
   now: () => Date;
   sleep: (milliseconds: number) => Promise<void>;
   uploadTimeoutMs: number;
   downloadTimeoutMs: number;
   availabilityAttempts: number;
   pollIntervalMs: number;
+}
+
+export interface StorageTransactionEvidence {
+  hash: string;
+  from: string;
+  to: string | null;
+  nonce: number;
+  chainId: bigint;
+  value: bigint;
+  gasPrice: bigint;
+  gasLimit: bigint;
+  data: string;
+  blockHash: string | null;
+  receiptStatus: number | null;
+}
+
+export type StorageTransactionReader = (
+  context: ReadyPreflightContext,
+  transactionHash: string,
+) => Promise<StorageTransactionEvidence | undefined>;
+
+export class StorageTransactionRecoveryError extends Error {
+  readonly kind: "UNAVAILABLE" | "VERIFICATION";
+  readonly code: string;
+
+  constructor(
+    kind: "UNAVAILABLE" | "VERIFICATION",
+    code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "StorageTransactionRecoveryError";
+    this.kind = kind;
+    this.code = code;
+  }
 }
 
 /* v8 ignore start -- exercised only through the bundled worker process */
@@ -862,6 +914,35 @@ async function uploadThroughWorker(
     txHash: outcome.event.txHash,
     txSeq: outcome.event.txSeq,
     reusedExisting: outcome.event.reusedExisting,
+  };
+}
+
+async function repairUploadThroughWorker(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+  timeoutMs: number,
+): Promise<StorageRepairResult> {
+  const quote = state.quote;
+  if (!quote || !state.upload?.txHash) {
+    throw new StorageWorkerFailure("STORAGE_TRANSACTION_RECOVERY_CONTEXT_INVALID");
+  }
+  const outcome = await runStorageWorker({
+    operation: "repair_upload",
+    bytesBase64: state.canary.bytesBase64,
+    expectedRootHash: state.canary.rootHash,
+    expectedRunnerAddress: state.runnerAddress,
+    expectedFlowAddress: quote.flowAddress,
+    chainId: quote.chainId,
+    networkName: context.config.projectChain.name,
+    rpcUrl: context.storageRpcUrl,
+    indexerUrl: context.storageIndexerUrl,
+  }, timeoutMs);
+  if (outcome.event.operation !== "repair_upload") {
+    throw new StorageWorkerFailure("STORAGE_WORKER_RESULT_INVALID");
+  }
+  return {
+    rootHash: outcome.event.rootHash,
+    txSeq: outcome.event.txSeq,
   };
 }
 
@@ -896,10 +977,141 @@ async function downloadThroughWorker(
   }
 }
 
+export async function readStorageTransactionEvidence(
+  context: ReadyPreflightContext,
+  transactionHash: string,
+): Promise<StorageTransactionEvidence | undefined> {
+  const request = new FetchRequest(context.storageRpcUrl);
+  request.timeout = DEFAULT_STORAGE_TIMEOUT_MS;
+  const network = new Network(
+    context.config.projectChain.name,
+    context.config.projectChain.chainId,
+  );
+  const provider = new JsonRpcProvider(request, network, {
+    batchMaxCount: 1,
+    staticNetwork: network,
+  });
+
+  try {
+    const [transaction, receipt] = await Promise.all([
+      provider.getTransaction(transactionHash),
+      provider.getTransactionReceipt(transactionHash),
+    ]);
+    if (!transaction || !receipt) {
+      return undefined;
+    }
+    return {
+      hash: transaction.hash.toLowerCase(),
+      from: transaction.from.toLowerCase(),
+      to: transaction.to?.toLowerCase() ?? null,
+      nonce: transaction.nonce,
+      chainId: transaction.chainId,
+      value: transaction.value,
+      gasPrice: transaction.gasPrice,
+      gasLimit: transaction.gasLimit,
+      data: transaction.data.toLowerCase(),
+      blockHash: transaction.blockHash ?? receipt.blockHash,
+      receiptStatus: receipt.status,
+    };
+  } catch {
+    throw new StorageTransactionRecoveryError(
+      "UNAVAILABLE",
+      "STORAGE_TRANSACTION_RECOVERY_UNAVAILABLE",
+      "The Storage transaction could not be read from the configured project chain.",
+    );
+  } finally {
+    provider.destroy();
+  }
+}
+
+export async function verifyRecoveredStorageTransaction(
+  context: ReadyPreflightContext,
+  state: StorageRunState,
+  transactionHash: string,
+  reader: StorageTransactionReader = readStorageTransactionEvidence,
+): Promise<void> {
+  const normalizedHash = TransactionHashSchema.parse(transactionHash.toLowerCase());
+  const quote = state.quote;
+  const authorization = state.authorization;
+  if (!quote || !authorization) {
+    throw new StorageTransactionRecoveryError(
+      "VERIFICATION",
+      "STORAGE_TRANSACTION_RECOVERY_CONTEXT_INVALID",
+      "The persisted quote and authorization are required for transaction recovery.",
+    );
+  }
+
+  let evidence: StorageTransactionEvidence | undefined;
+  try {
+    evidence = await reader(context, normalizedHash);
+  } catch (error) {
+    if (error instanceof StorageTransactionRecoveryError) {
+      throw error;
+    }
+    throw new StorageTransactionRecoveryError(
+      "UNAVAILABLE",
+      "STORAGE_TRANSACTION_RECOVERY_UNAVAILABLE",
+      "The Storage transaction could not be read from the configured project chain.",
+    );
+  }
+  if (!evidence) {
+    throw new StorageTransactionRecoveryError(
+      "UNAVAILABLE",
+      "STORAGE_TRANSACTION_RECOVERY_UNAVAILABLE",
+      "The Storage transaction is not yet available from the configured project chain.",
+    );
+  }
+
+  const bytes = Uint8Array.from(Buffer.from(state.canary.bytesBase64, "base64"));
+  const file = new MemData(bytes);
+  const wallet = new Wallet(context.privateKey);
+  const [submission, submissionError] = await file.createSubmission(
+    "0x",
+    wallet.address,
+  );
+  if (submissionError || !submission) {
+    throw new StorageTransactionRecoveryError(
+      "UNAVAILABLE",
+      "STORAGE_TRANSACTION_RECOVERY_UNAVAILABLE",
+      "The expected Storage submission could not be reconstructed.",
+    );
+  }
+  const flow = getFlowContract(
+    quote.flowAddress,
+    wallet as unknown as Parameters<typeof getFlowContract>[1],
+  );
+  const expectedData = flow.interface.encodeFunctionData("submit", [submission])
+    .toLowerCase();
+  const approvedMaximum = BigInt(authorization.maximumSpendWei);
+  const transactionMaximum = evidence.value + evidence.gasPrice * evidence.gasLimit;
+  const matches =
+    evidence.hash === normalizedHash &&
+    evidence.from === state.runnerAddress &&
+    evidence.to === quote.flowAddress &&
+    evidence.nonce === quote.nonce &&
+    evidence.chainId === BigInt(quote.chainId) &&
+    evidence.value === BigInt(quote.storageFeeWei) &&
+    evidence.gasPrice === BigInt(quote.gasPriceWei) &&
+    evidence.gasLimit === BigInt(quote.gasLimit) &&
+    evidence.data === expectedData &&
+    evidence.blockHash !== null &&
+    evidence.receiptStatus === 1 &&
+    transactionMaximum <= approvedMaximum;
+  if (!matches) {
+    throw new StorageTransactionRecoveryError(
+      "VERIFICATION",
+      "STORAGE_TRANSACTION_RECOVERY_MISMATCH",
+      "The supplied transaction does not match the authorized Storage submission.",
+    );
+  }
+}
+
 const DEFAULT_ROUND_TRIP_DEPENDENCIES: StorageRoundTripDependencies = {
   quote: quoteStorageUpload,
   upload: uploadThroughWorker,
   download: downloadThroughWorker,
+  reconcileTransaction: verifyRecoveredStorageTransaction,
+  repairUpload: repairUploadThroughWorker,
   now: currentDate,
   sleep: (milliseconds) => new Promise((resolveSleep) => {
     setTimeout(resolveSleep, milliseconds);
@@ -1307,6 +1519,49 @@ export async function resumeStorageRoundTrip(
     });
     await writeStorageRunState(context.projectDirectory, state);
   }
+  if (
+    state.state === "UPLOAD_TX_UNKNOWN_AFTER_DISPATCH" &&
+    input.observedTransactionHash
+  ) {
+    try {
+      await dependencies.reconcileTransaction(
+        context,
+        state,
+        input.observedTransactionHash,
+      );
+      state = await persistObservedTransaction(
+        context,
+        state,
+        input.observedTransactionHash,
+        dependencies.now,
+      );
+    } catch (error) {
+      const recoveryError = error instanceof StorageTransactionRecoveryError
+        ? error
+        : new StorageTransactionRecoveryError(
+            "UNAVAILABLE",
+            "STORAGE_TRANSACTION_RECOVERY_UNAVAILABLE",
+            "The Storage transaction could not be verified.",
+          );
+      const unavailable = recoveryError.kind === "UNAVAILABLE";
+      return resumeResult(
+        unavailable ? "PENDING" : "VERIFICATION_FAILED",
+        state,
+        resumeData(context, state, "UPLOAD_PENDING", [
+          check(
+            recoveryError.code,
+            unavailable ? "PENDING" : "FAIL",
+            recoveryError.message,
+          ),
+        ], true),
+        [storageStructuredError(
+          recoveryError.code,
+          recoveryError.message,
+          unavailable,
+        )],
+      );
+    }
+  }
   if (state.state === "UPLOAD_TX_UNKNOWN_AFTER_DISPATCH") {
     const message = "The prior process stopped after dispatch began but before a transaction hash was safely recorded. Automatic retry is blocked to prevent duplicate spending.";
     return resumeResult(
@@ -1446,6 +1701,7 @@ export async function resumeStorageRoundTrip(
           txSeq: upload.txSeq,
           reusedExisting: upload.reusedExisting,
           submittedAt: state.upload?.submittedAt ?? dependencies.now().toISOString(),
+          segmentsConfirmedAt: dependencies.now().toISOString(),
         },
         errorCode: undefined,
       });
@@ -1515,6 +1771,51 @@ export async function resumeStorageRoundTrip(
           check("STORAGE_TX_UNKNOWN_AFTER_DISPATCH", "PENDING", message),
         ], true),
         [storageStructuredError("STORAGE_TX_UNKNOWN_AFTER_DISPATCH", message, false)],
+      );
+    }
+  }
+
+  if (state.upload?.txHash && !state.upload.segmentsConfirmedAt) {
+    try {
+      const repair = await dependencies.repairUpload(
+        context,
+        state,
+        dependencies.uploadTimeoutMs,
+      );
+      if (repair.rootHash !== state.canary.rootHash) {
+        throw new StorageWorkerFailure("STORAGE_UPLOAD_ROOT_MISMATCH");
+      }
+      state = StorageRunStateSchema.parse({
+        ...state,
+        state: "AVAILABILITY_PENDING",
+        updatedAt: dependencies.now().toISOString(),
+        upload: {
+          ...state.upload,
+          txSeq: repair.txSeq,
+          segmentsConfirmedAt: dependencies.now().toISOString(),
+        },
+        errorCode: undefined,
+      });
+      await writeStorageRunState(context.projectDirectory, state);
+    } catch (error) {
+      const failure = error instanceof StorageWorkerFailure
+        ? error
+        : new StorageWorkerFailure("STORAGE_RECOVERY_UPLOAD_INCOMPLETE");
+      const message = "The confirmed Storage transaction is recorded, but its data segments are not fully available yet. Resume retries segment upload without another transaction.";
+      state = StorageRunStateSchema.parse({
+        ...state,
+        state: "AVAILABILITY_PENDING",
+        updatedAt: dependencies.now().toISOString(),
+        errorCode: failure.code,
+      });
+      await writeStorageRunState(context.projectDirectory, state);
+      return resumeResult(
+        "PENDING",
+        state,
+        resumeData(context, state, "AVAILABILITY_PENDING", [
+          check(failure.code, "PENDING", message),
+        ], false),
+        [storageStructuredError(failure.code, message, true)],
       );
     }
   }

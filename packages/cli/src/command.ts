@@ -57,7 +57,7 @@ const DEFAULT_CLI_DEPENDENCIES: CliDependencies = {
   resume: resumeFlightcheck,
 };
 
-const USAGE = "Usage: flightcheck run [--cwd <project-directory>] [--json] | flightcheck resume --run-id <uuid> [--allow-operation storage_round_trip --maximum-spend-wei <wei>] [--cwd <project-directory>] [--json]";
+const USAGE = "Usage: flightcheck run [--cwd <project-directory>] [--json] | flightcheck resume --run-id <uuid> [--allow-operation storage_round_trip --maximum-spend-wei <wei>] [--observed-tx-hash <hash>] [--cwd <project-directory>] [--json]";
 
 function parseCliArgs(args: readonly string[]) {
   return parseArgs({
@@ -70,6 +70,7 @@ function parseCliArgs(args: readonly string[]) {
       "run-id": { type: "string" },
       "allow-operation": { type: "string", multiple: true },
       "maximum-spend-wei": { type: "string" },
+      "observed-tx-hash": { type: "string" },
     },
   });
 }
@@ -195,7 +196,8 @@ export async function executeCli(
     if (
       parsed.values["run-id"] ||
       parsed.values["allow-operation"] ||
-      parsed.values["maximum-spend-wei"]
+      parsed.values["maximum-spend-wei"] ||
+      parsed.values["observed-tx-hash"]
     ) {
       result = resultForError(
         "run",
@@ -226,6 +228,7 @@ export async function executeCli(
       runId: parsed.values["run-id"],
       allowedOperations: parsed.values["allow-operation"] ?? [],
       maximumSpendWei: parsed.values["maximum-spend-wei"],
+      observedTransactionHash: parsed.values["observed-tx-hash"],
     });
     if (!parsedResumeInput.success) {
       result = resultForError(

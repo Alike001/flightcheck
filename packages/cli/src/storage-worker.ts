@@ -7,6 +7,7 @@ import {
 import {
   JsonRpcProvider,
   Network,
+  VoidSigner,
   Wallet,
   getAddress,
 } from "ethers";
@@ -40,9 +41,22 @@ const DownloadWorkerInputSchema = z.strictObject({
   outputPath: z.string().min(1).max(4_096),
 });
 
+const RepairUploadWorkerInputSchema = z.strictObject({
+  operation: z.literal("repair_upload"),
+  bytesBase64: z.string().min(1).max(16_384),
+  expectedRootHash: Hex32Schema,
+  expectedRunnerAddress: AddressSchema,
+  expectedFlowAddress: AddressSchema,
+  chainId: z.number().int().positive(),
+  networkName: z.string().min(1).max(214),
+  rpcUrl: z.string().url(),
+  indexerUrl: z.string().url(),
+});
+
 export const StorageWorkerInputSchema = z.discriminatedUnion("operation", [
   UploadWorkerInputSchema,
   DownloadWorkerInputSchema,
+  RepairUploadWorkerInputSchema,
 ]);
 
 export type StorageWorkerInput = z.infer<typeof StorageWorkerInputSchema>;
@@ -58,9 +72,15 @@ export type StorageWorkerEvent =
     reusedExisting: boolean;
   }
   | { kind: "complete"; operation: "download"; sdkProofRequested: true }
+  | {
+    kind: "complete";
+    operation: "repair_upload";
+    rootHash: string;
+    txSeq: number;
+  }
   | { kind: "error"; code: string };
 
-const StorageWorkerEventSchema = z.discriminatedUnion("kind", [
+export const StorageWorkerEventSchema = z.union([
   z.strictObject({ kind: z.literal("transaction"), txHash: Hex32Schema }),
   z.strictObject({
     kind: z.literal("complete"),
@@ -74,6 +94,12 @@ const StorageWorkerEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("complete"),
     operation: z.literal("download"),
     sdkProofRequested: z.literal(true),
+  }),
+  z.strictObject({
+    kind: z.literal("complete"),
+    operation: z.literal("repair_upload"),
+    rootHash: Hex32Schema,
+    txSeq: z.number().int().nonnegative(),
   }),
   z.strictObject({
     kind: z.literal("error"),
@@ -230,6 +256,76 @@ async function runDownload(
   } satisfies StorageWorkerEvent);
 }
 
+async function runRepairUpload(
+  input: z.infer<typeof RepairUploadWorkerInputSchema>,
+  port: Pick<MessagePort, "postMessage">,
+): Promise<void> {
+  const network = new Network(input.networkName, input.chainId);
+  const provider = new JsonRpcProvider(input.rpcUrl, network, {
+    batchMaxCount: 1,
+    staticNetwork: network,
+  });
+
+  try {
+    const actualChainId = Number(BigInt(await provider.send("eth_chainId", [])));
+    if (actualChainId !== input.chainId) {
+      throw new StorageWorkerFailure("STORAGE_CHAIN_ID_CHANGED");
+    }
+    const signer = new VoidSigner(input.expectedRunnerAddress, provider);
+    const bytes = Uint8Array.from(Buffer.from(input.bytesBase64, "base64"));
+    const file = new MemData(bytes);
+    const [tree, treeError] = await file.merkleTree();
+    const actualRootHash = tree?.rootHash();
+    if (
+      treeError ||
+      !actualRootHash ||
+      normalizeHash(actualRootHash) !== input.expectedRootHash
+    ) {
+      throw new StorageWorkerFailure("STORAGE_CANARY_ROOT_MISMATCH");
+    }
+
+    const indexer = new Indexer(input.indexerUrl);
+    const sdkSigner = signer as unknown as Parameters<
+      Indexer["newUploaderFromIndexerNodes"]
+    >[1];
+    const [uploader, uploaderError] = await indexer.newUploaderFromIndexerNodes(
+      input.rpcUrl,
+      sdkSigner,
+      1,
+    );
+    if (uploaderError || !uploader) {
+      throw new StorageWorkerFailure("STORAGE_UPLOADER_UNAVAILABLE");
+    }
+    const selectedFlowAddress = normalizeAddress(await uploader.flow.getAddress());
+    if (selectedFlowAddress !== input.expectedFlowAddress) {
+      throw new StorageWorkerFailure("STORAGE_FLOW_ADDRESS_CHANGED");
+    }
+
+    const [result, uploadError] = await uploader.uploadFile(file, {
+      expectedReplica: 1,
+      finalityRequired: true,
+      skipIfFinalized: true,
+      skipTx: true,
+      submitter: input.expectedRunnerAddress,
+    });
+    if (uploadError) {
+      throw new StorageWorkerFailure("STORAGE_RECOVERY_UPLOAD_INCOMPLETE");
+    }
+    if (normalizeHash(result.rootHash) !== input.expectedRootHash) {
+      throw new StorageWorkerFailure("STORAGE_UPLOAD_ROOT_MISMATCH");
+    }
+
+    port.postMessage({
+      kind: "complete",
+      operation: "repair_upload",
+      rootHash: input.expectedRootHash,
+      txSeq: result.txSeq,
+    } satisfies StorageWorkerEvent);
+  } finally {
+    provider.destroy();
+  }
+}
+
 export function isStorageWorkerInput(input: unknown): input is StorageWorkerInput {
   return StorageWorkerInputSchema.safeParse(input).success;
 }
@@ -252,8 +348,10 @@ export async function executeStorageWorker(
   try {
     if (parsed.data.operation === "upload") {
       await runUpload(parsed.data, port);
-    } else {
+    } else if (parsed.data.operation === "download") {
       await runDownload(parsed.data, port);
+    } else {
+      await runRepairUpload(parsed.data, port);
     }
   } catch (error) {
     const failure = error instanceof StorageWorkerFailure

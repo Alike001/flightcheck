@@ -71,6 +71,7 @@ describe("CLI command boundary", () => {
   it("rejects funded flags on run and incomplete resume syntax", async () => {
     for (const args of [
       ["run", "--allow-operation", "storage_round_trip", "--json"],
+      ["run", "--observed-tx-hash", `0x${"1".repeat(64)}`, "--json"],
       ["resume", "--json"],
       ["resume", "--run-id", "not-a-uuid", "--json"],
     ]) {
@@ -137,6 +138,8 @@ describe("CLI command boundary", () => {
       "storage_round_trip",
       "--maximum-spend-wei",
       "50500",
+      "--observed-tx-hash",
+      `0x${"8".repeat(64)}`,
       "--json",
     ], {
       stdout: (text) => {
@@ -150,6 +153,7 @@ describe("CLI command boundary", () => {
       runId: "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
       allowedOperations: ["storage_round_trip"],
       maximumSpendWei: "50500",
+      observedTransactionHash: `0x${"8".repeat(64)}`,
     });
     expect(JSON.parse(resumeOutput)).toMatchObject({ command: "resume" });
 

@@ -6,6 +6,7 @@ import { Wallet } from "ethers";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  StorageWorkerEventSchema,
   StorageWorkerInputSchema,
   executeStorageWorker,
   isStorageWorkerInput,
@@ -27,7 +28,7 @@ describe("Storage worker message boundary", () => {
     expect(JSON.stringify(postMessage.mock.calls)).not.toContain("must-not-be-returned");
   });
 
-  it("accepts only complete upload and download messages", () => {
+  it("accepts only valid worker inputs and both complete event variants", () => {
     const download = {
       operation: "download" as const,
       rootHash: `0x${"1".repeat(64)}`,
@@ -37,6 +38,43 @@ describe("Storage worker message boundary", () => {
     expect(StorageWorkerInputSchema.parse(download)).toEqual(download);
     expect(isStorageWorkerInput(download)).toBe(true);
     expect(isStorageWorkerInput({ ...download, outputPath: "" })).toBe(false);
+
+    expect(StorageWorkerEventSchema.parse({
+      kind: "complete",
+      operation: "upload",
+      rootHash: `0x${"2".repeat(64)}`,
+      txHash: `0x${"3".repeat(64)}`,
+      txSeq: 19,
+      reusedExisting: false,
+    })).toMatchObject({ operation: "upload", txSeq: 19 });
+    expect(StorageWorkerEventSchema.parse({
+      kind: "complete",
+      operation: "download",
+      sdkProofRequested: true,
+    })).toEqual({
+      kind: "complete",
+      operation: "download",
+      sdkProofRequested: true,
+    });
+    const repair = {
+      operation: "repair_upload" as const,
+      bytesBase64: "AQ==",
+      expectedRootHash: `0x${"4".repeat(64)}`,
+      expectedRunnerAddress: `0x${"5".repeat(40)}`,
+      expectedFlowAddress: `0x${"6".repeat(40)}`,
+      chainId: 16602,
+      networkName: "0G Galileo Testnet",
+      rpcUrl: "https://rpc.example",
+      indexerUrl: "https://indexer.example",
+    };
+    expect(StorageWorkerInputSchema.parse(repair)).toEqual(repair);
+    expect(JSON.stringify(repair)).not.toContain("privateKey");
+    expect(StorageWorkerEventSchema.parse({
+      kind: "complete",
+      operation: "repair_upload",
+      rootHash: repair.expectedRootHash,
+      txSeq: 19,
+    })).toMatchObject({ operation: "repair_upload", txSeq: 19 });
   });
 
   it("runs the bundled worker entry and rejects a changed nonce before dispatch", async () => {

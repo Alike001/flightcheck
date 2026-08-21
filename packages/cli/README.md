@@ -96,6 +96,23 @@ dispatch might have occurred but no hash was saved, automatic retry is blocked
 to avoid duplicate spending. Once a hash is known, later `resume` calls poll and
 download the same root without sending another transaction.
 
+If a process stops after dispatch begins but before the hash is persisted,
+recover with the confirmed public transaction hash:
+
+```bash
+node packages/cli/dist/bin.js resume \
+  --cwd /path/to/project \
+  --run-id <runId> \
+  --observed-tx-hash <confirmedTransactionHash> \
+  --json
+```
+
+Flightcheck verifies the transaction's chain, successful receipt, sender,
+recipient, nonce, value, gas settings, exact Storage calldata, and approved
+ceiling before accepting it. If the registered root is missing data segments,
+`resume` finishes those segments with `skipTx: true` and an ethers `VoidSigner`.
+That worker has no private key and cannot send another transaction.
+
 The published 0G Storage SDK's `proof` download flag is not treated as verified
 evidence because version 1.2.11 does not implement that check. Flightcheck
 requests it, then independently recomputes the downloaded Merkle root and
