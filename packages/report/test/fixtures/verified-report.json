@@ -56,8 +56,10 @@
       "state": "PASS",
       "durationMs": 5500,
       "rootHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "downloadRootHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "proofVerified": true,
+      "integrityMethod": "RECOMPUTED_MERKLE_ROOT",
+      "rootMatched": true,
       "bytesMatched": true,
       "retrievalReference": "0g-storage://0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "errors": []

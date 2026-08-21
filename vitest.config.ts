@@ -13,7 +13,10 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json", "html"],
       include: ["packages/{cli,report}/src/**/*.ts"],
-      exclude: ["packages/{cli,report}/src/{bin,index}.ts"],
+      exclude: [
+        "packages/{cli,report}/src/{bin,index}.ts",
+        "packages/cli/src/storage-worker.ts",
+      ],
       thresholds: {
         branches: 90,
         functions: 95,

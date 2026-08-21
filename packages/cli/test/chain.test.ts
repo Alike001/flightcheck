@@ -210,8 +210,10 @@ describe("live Chain RPC and signer preflight", () => {
     expect(factory).not.toHaveBeenCalled();
   });
 
-  it("advances the full run through Chain only after preflight passes", async () => {
+  it("advances the full run into non-funded Storage preparation only after Chain passes", async () => {
     const directory = await createProjectFixture();
+    const runId = "018f47a6-7b42-7c85-9f60-58ab3a2f8e10";
+    const now = "2026-08-20T16:00:00.000Z";
 
     const result = await runFlightcheck(
       {
@@ -220,11 +222,30 @@ describe("live Chain RPC and signer preflight", () => {
         nodeVersion: "v22.20.0",
       },
       { rpcFactory: rpcFactory(16602n, 16661n) },
+      {
+        createRunId: () => runId,
+        createNonce: () => `0x${"12".repeat(32)}`,
+        now: () => new Date(now),
+        quote: async (_context, state) => ({
+          rootHash: state.canary.rootHash,
+          runnerAddress: new Wallet(TEST_SECRET).address.toLowerCase(),
+          chainId: 16602,
+          flowAddress: `0x${"3".repeat(40)}`,
+          marketAddress: `0x${"4".repeat(40)}`,
+          storageFeeWei: "100",
+          gasPriceWei: "2",
+          gasLimit: "25200",
+          nonce: 7,
+          maximumSpendWei: "50500",
+          quotedAt: now,
+          expiresAt: "2026-08-20T16:05:00.000Z",
+        }),
+      },
     );
 
     expect(result.data).toMatchObject({
-      stage: "CHAIN",
-      state: "READY_FOR_STORAGE",
+      stage: "STORAGE",
+      state: "APPROVAL_REQUIRED",
     });
   });
 });

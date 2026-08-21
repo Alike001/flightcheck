@@ -12,10 +12,11 @@
     "README.md"
   ],
   "scripts": {
-    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/bin.js --sourcemap --banner:js=\"#!/usr/bin/env node\"",
+    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/bin.js --sourcemap --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "typecheck": "pnpm --filter @flightcheck/report build && tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@0gfoundation/0g-storage-ts-sdk": "1.2.11",
     "@flightcheck/report": "workspace:*",
     "esbuild": "0.27.2",
     "ethers": "6.17.0",

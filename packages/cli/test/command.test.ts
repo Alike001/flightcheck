@@ -68,6 +68,28 @@ describe("CLI command boundary", () => {
     }
   });
 
+  it("rejects funded flags on run and incomplete resume syntax", async () => {
+    for (const args of [
+      ["run", "--allow-operation", "storage_round_trip", "--json"],
+      ["run", "--observed-tx-hash", `0x${"1".repeat(64)}`, "--json"],
+      ["resume", "--json"],
+      ["resume", "--run-id", "not-a-uuid", "--json"],
+    ]) {
+      let stdout = "";
+      const exitCode = await executeCli(args, {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => undefined,
+      });
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(stdout)).toMatchObject({
+        status: "USAGE_ERROR",
+        errors: [{ code: "CLI_USAGE_INVALID" }],
+      });
+    }
+  });
+
   it("never mislabels a runtime TypeError as invalid CLI syntax", async () => {
     const internalSecret = "runtime-secret-must-not-leak";
     let stdout = "";
@@ -97,21 +119,112 @@ describe("CLI command boundary", () => {
     expect(stdout).not.toContain(internalSecret);
   });
 
-  it("reserves resume and verify until their scoped issues are implemented", async () => {
-    for (const command of ["resume", "verify"] as const) {
-      let stdout = "";
-      const exitCode = await executeCli([command, "--json"], {
-        stdout: (text) => {
-          stdout += text;
-        },
-        stderr: () => undefined,
-      });
-      const parsed = JSON.parse(stdout) as { command: string; errors: { code: string }[] };
+  it("implements resume while keeping verify reserved", async () => {
+    let resumeOutput = "";
+    const resume = vi.fn(async () => ({
+      schemaVersion: "1.0.0" as const,
+      command: "resume" as const,
+      status: "PENDING" as const,
+      exitCode: 4 as const,
+      runId: "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+      data: { state: "APPROVAL_REQUIRED" },
+      errors: [],
+    }));
+    const resumeExitCode = await executeCli([
+      "resume",
+      "--run-id",
+      "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+      "--allow-operation",
+      "storage_round_trip",
+      "--maximum-spend-wei",
+      "50500",
+      "--observed-tx-hash",
+      `0x${"8".repeat(64)}`,
+      "--json",
+    ], {
+      stdout: (text) => {
+        resumeOutput += text;
+      },
+      stderr: () => undefined,
+    }, { resume });
 
-      expect(exitCode).toBe(1);
-      expect(parsed.command).toBe(command);
-      expect(parsed.errors[0]?.code).toBe("CLI_COMMAND_NOT_IMPLEMENTED");
-    }
+    expect(resumeExitCode).toBe(4);
+    expect(resume).toHaveBeenCalledWith({}, {
+      runId: "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+      allowedOperations: ["storage_round_trip"],
+      maximumSpendWei: "50500",
+      observedTransactionHash: `0x${"8".repeat(64)}`,
+    });
+    expect(JSON.parse(resumeOutput)).toMatchObject({ command: "resume" });
+
+    let verifyOutput = "";
+    const verifyExitCode = await executeCli(["verify", "--json"], {
+      stdout: (text) => {
+        verifyOutput += text;
+      },
+      stderr: () => undefined,
+    });
+    expect(verifyExitCode).toBe(1);
+    expect(JSON.parse(verifyOutput)).toMatchObject({
+      command: "verify",
+      errors: [{ code: "CLI_COMMAND_NOT_IMPLEMENTED" }],
+    });
+  });
+
+  it("redacts an unexpected resume failure as one internal JSON result", async () => {
+    let stdout = "";
+    const exitCode = await executeCli([
+      "resume",
+      "--run-id",
+      "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+      "--json",
+    ], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => undefined,
+    }, {
+      resume: async () => {
+        throw new Error("private-runtime-detail");
+      },
+    });
+
+    expect(exitCode).toBe(5);
+    expect(JSON.parse(stdout)).toMatchObject({
+      command: "resume",
+      status: "INTERNAL_ERROR",
+      errors: [{ code: "CLI_INTERNAL_ERROR" }],
+    });
+    expect(stdout).not.toContain("private-runtime-detail");
+  });
+
+  it("keeps resume recovery guidance on stderr in human mode", async () => {
+    let stderr = "";
+    const resume = async () => ({
+      schemaVersion: "1.0.0" as const,
+      command: "resume" as const,
+      status: "PENDING" as const,
+      exitCode: 4 as const,
+      runId: "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+      data: {
+        state: "AVAILABILITY_PENDING",
+        checks: [{ status: "PENDING", message: "Waiting for the same root." }],
+      },
+      errors: [],
+    });
+    const exitCode = await executeCli([
+      "resume",
+      "--run-id",
+      "018f47a6-7b42-7c85-9f60-58ab3a2f8e10",
+    ], {
+      stdout: () => undefined,
+      stderr: (text) => {
+        stderr += text;
+      },
+    }, { resume });
+
+    expect(exitCode).toBe(4);
+    expect(stderr).toContain("same root without sending another transaction");
   });
 
   it("keeps human diagnostics on stderr for an incomplete run", async () => {

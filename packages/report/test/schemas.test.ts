@@ -41,6 +41,14 @@ describe("report payload schema", () => {
     const missingTransaction = createVerifiedPayload();
     delete missingTransaction.checks.storage.transactionHash;
     expect(ReportPayloadSchema.safeParse(missingTransaction).success).toBe(false);
+
+    const missingDownloadRoot = createVerifiedPayload();
+    delete missingDownloadRoot.checks.storage.downloadRootHash;
+    expect(ReportPayloadSchema.safeParse(missingDownloadRoot).success).toBe(false);
+
+    const unmatchedRoot = createVerifiedPayload();
+    unmatchedRoot.checks.storage.rootMatched = false;
+    expect(ReportPayloadSchema.safeParse(unmatchedRoot).success).toBe(false);
   });
 
   it.each([
