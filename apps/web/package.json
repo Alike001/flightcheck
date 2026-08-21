@@ -1,0 +1,25 @@
+{
+  "name": "@flightcheck/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @flightcheck/db build && tsc -p tsconfig.json --noEmit && next build",
+    "dev": "next dev",
+    "start": "node .next/standalone/apps/web/server.js",
+    "typecheck": "pnpm --filter @flightcheck/db build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@flightcheck/db": "workspace:*",
+    "@flightcheck/report": "workspace:*",
+    "next": "16.3.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "ethers": "6.17.0"
+  }
+}

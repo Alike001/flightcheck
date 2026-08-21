@@ -47,7 +47,8 @@ Flightcheck verifies the declared 0G environment and its canonical protocol oper
 
 - `packages/cli`: deterministic project and Chain preflight, no-spend Storage and Direct Compute checks, and explicitly authorized, spend-limited, resumable live operations through `resume`. `verify` follows in a later slice.
 - `packages/report`: shared schema, canonicalization, hashing, signing, redaction, deterministic state reduction, and agent-readable command results.
-- `apps/web`: the landing page, report page, and versioned report API.
+- `packages/db`: PostgreSQL migrations and the immutable signed-report repository shared by the API and future indexer.
+- `apps/web`: the versioned report API. The landing page and report page follow in later slices.
 - `apps/indexer`: idempotent and reorg-aware 0G mainnet event ingestion.
 - `contracts`: the immutable `FlightcheckRegistry` contract and Foundry tests.
 
@@ -64,6 +65,26 @@ pnpm test:coverage
 ```
 
 The published report schema lives at `packages/report/schemas/flightcheck-report-v1.schema.json`. Runtime and published schema output are compared in tests, and the published document is independently exercised with a Draft 2020-12 validator.
+
+### Report API
+
+The API requires PostgreSQL plus three server-only environment values. Copy `apps/web/.env.example` into a local untracked environment file and supply the registry address used when the CLI signed the report.
+
+```bash
+pnpm --filter @flightcheck/db build
+pnpm --filter @flightcheck/db migrate
+pnpm --filter @flightcheck/web dev
+```
+
+The machine routes are:
+
+- `POST /api/v1/reports` validates, hashes, and verifies one `{ payload, signature }` request before immutable persistence.
+- `GET /api/v1/reports/[reportHash]` returns the canonical signed report and its stable public URL.
+- `POST /api/v1/reports/[reportHash]/anchor-hints` stores an untrusted transaction hash without claiming verification.
+- `GET /api/v1/health` returns bounded database availability without configuration details.
+- `GET /schemas/flightcheck-report-v1.schema.json` serves the exact checked-in schema.
+
+Request bodies must use `application/json` and cannot exceed 64 KiB. The API recomputes every deterministic field and rejects unknown keys, credential-shaped public text, invalid runner signatures, and conflicting retries. New report rows are constrained to `AWAITING_ANCHOR`. Only the future indexer can derive matched event state from 0G mainnet.
 
 The minimal onchain anchor is implemented in `contracts/`. It stores only the
 runner and report-hash identity needed for duplicate prevention and emits the
@@ -104,6 +125,6 @@ Machine-facing commands will use versioned JSON envelopes, stable error identifi
 
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, read-only Chain stage, real Galileo Storage round trip, and verified Galileo Direct Compute path are merged. The funded Galileo ledger and provider account now exist. The first live response had valid TEE verification but exposed a real boundary bug: the 32-token cap truncated the 93-character canary after 33 completion tokens. After raising the cap to 128 tokens, a separately approved paid response returned the complete canary and the 0G SDK independently reported `VERIFIED`. No wallet transaction occurred during either inference request. Issue #14 adds deterministic report finalization and the guarded mainnet anchor state machine. Its actual ethers adapter has completed a one-transaction local-chain proof, but no 0G mainnet transaction is claimed. The report API, indexer, verifier command, landing page, public report page, and real registry deployment remain.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, read-only Chain stage, real Galileo Storage round trip, verified Galileo Direct Compute path, report finalization, guarded mainnet anchor state machine, and versioned report publication API are implemented. The funded Galileo ledger and provider account now exist. The first live response had valid TEE verification but exposed a real boundary bug: the 32-token cap truncated the 93-character canary after 33 completion tokens. After raising the cap to 128 tokens, a separately approved paid response returned the complete canary and the 0G SDK independently reported `VERIFIED`. No wallet transaction occurred during either inference request. The actual ethers anchor adapter has completed a one-transaction local-chain proof, but no 0G mainnet transaction is claimed. The indexer, verifier command, landing page, public report page, and real registry deployment remain.
 
-Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10), Direct Compute verification in [issue #12](https://github.com/Alike001/flightcheck/issues/12), and report finalization plus guarded anchoring in [issue #14](https://github.com/Alike001/flightcheck/issues/14). Each meaningful feature has a focused issue and tests before the next feature starts.
+Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10), Direct Compute verification in [issue #12](https://github.com/Alike001/flightcheck/issues/12), report finalization plus guarded anchoring in [issue #14](https://github.com/Alike001/flightcheck/issues/14), and report publication in [issue #16](https://github.com/Alike001/flightcheck/issues/16). Each meaningful feature has a focused issue and tests before the next feature starts.
