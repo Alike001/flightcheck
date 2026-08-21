@@ -139,6 +139,12 @@ function formatHuman(result: CommandResult): string {
       lines.push("The Compute response identifier is known. Resume retries verification only and never repeats the paid request.");
     } else if (result.data.state === "VERIFIED") {
       lines.push("The nonce-bearing Direct Compute response passed SDK verification.");
+    } else if (result.data.state === "REPORT_READY_FOR_PUBLICATION") {
+      lines.push("The canonical report is signed. Publication must succeed before Flightcheck can quote the mainnet anchor.");
+    } else if (result.data.state === "ANCHOR_PENDING") {
+      lines.push("The mainnet anchor has a known or uncertain pending outcome. Flightcheck will not send a duplicate transaction automatically.");
+    } else if (result.data.state === "ANCHORED") {
+      lines.push("The canonical report hash has a matching confirmed 0G mainnet registry event.");
     }
   } else {
     for (const error of result.errors) {
