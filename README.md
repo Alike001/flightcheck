@@ -91,13 +91,19 @@ ceiling and requires a separate `compute_inference` approval. Flightcheck then
 sends one 128-token-capped nonce canary, persists its response ID before
 processing the body, and maps the SDK's exact `true`, `false`, or `null` result to
 `VERIFIED`, `INVALID`, or `UNVERIFIED`. An uncertain paid dispatch without a
-response ID is never retried automatically. Mainnet anchor proof remains
-pending. See `packages/cli/README.md` for the config shape and commands.
+response ID is never retried automatically. Once all three layers pass, the CLI
+builds one canonical report, commits to the inspected project and lockfile,
+signs the report through EIP-712, and saves it atomically. It stops at
+`REPORT_READY_FOR_PUBLICATION` until the report API records the exact report URL.
+Only then can it quote a mainnet anchor, require a separate `mainnet_anchor`
+approval and exact gas ceiling, persist the earliest transaction hash, and
+verify the matching `ReportAnchored` receipt. See `packages/cli/README.md` for
+the config shape and commands.
 
 Machine-facing commands will use versioned JSON envelopes, stable error identifiers, and documented exit codes. JSON output never grants permission to spend. Non-interactive funded operations must provide explicit permissions and enforceable spending limits.
 
 ## Current status
 
-The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, read-only Chain stage, and real Galileo Storage round trip are merged. Issue #12 contains the Direct Compute state machine, hard worker timeout, transaction-blocking SDK boundary, exact exposure approval, response-ID recovery, and deterministic verification mapping. The funded Galileo ledger and provider account now exist. The first live response had valid TEE verification but exposed a real boundary bug: the 32-token cap truncated the 93-character canary after 33 completion tokens. After raising the cap to 128 tokens, a separately approved paid response returned the complete canary and the 0G SDK independently reported `VERIFIED`. No wallet transaction occurred during either inference request. The indexer and public pages remain.
+The product scope, 90-second demo path, visual direction, and technical architecture are approved. The deterministic report core, registry contract, no-spend CLI preflight, read-only Chain stage, real Galileo Storage round trip, and verified Galileo Direct Compute path are merged. The funded Galileo ledger and provider account now exist. The first live response had valid TEE verification but exposed a real boundary bug: the 32-token cap truncated the 93-character canary after 33 completion tokens. After raising the cap to 128 tokens, a separately approved paid response returned the complete canary and the 0G SDK independently reported `VERIFIED`. No wallet transaction occurred during either inference request. Issue #14 adds deterministic report finalization and the guarded mainnet anchor state machine. Its actual ethers adapter has completed a one-transaction local-chain proof, but no 0G mainnet transaction is claimed. The report API, indexer, verifier command, landing page, public report page, and real registry deployment remain.
 
-Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10), and Direct Compute verification in [issue #12](https://github.com/Alike001/flightcheck/issues/12). Each meaningful feature has a focused issue and tests before the next feature starts.
+Architecture decisions are tracked in [issue #1](https://github.com/Alike001/flightcheck/issues/1), the registry implementation in [issue #4](https://github.com/Alike001/flightcheck/issues/4), CLI preflight in [issue #6](https://github.com/Alike001/flightcheck/issues/6), live Chain preflight in [issue #8](https://github.com/Alike001/flightcheck/issues/8), the Storage round trip in [issue #10](https://github.com/Alike001/flightcheck/issues/10), Direct Compute verification in [issue #12](https://github.com/Alike001/flightcheck/issues/12), and report finalization plus guarded anchoring in [issue #14](https://github.com/Alike001/flightcheck/issues/14). Each meaningful feature has a focused issue and tests before the next feature starts.

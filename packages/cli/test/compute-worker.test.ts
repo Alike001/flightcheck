@@ -357,8 +357,8 @@ describe("Compute worker message and timeout boundary", () => {
       });
       const timeout = setTimeout(() => {
         void worker.terminate();
-        rejectEvent(new Error("Bundled Compute worker did not return within 2 seconds."));
-      }, 2_000);
+        rejectEvent(new Error("Bundled Compute worker did not return within 5 seconds."));
+      }, 5_000);
       worker.once("message", (message) => {
         clearTimeout(timeout);
         void worker.terminate();

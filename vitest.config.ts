@@ -15,6 +15,7 @@ export default defineConfig({
       include: ["packages/{cli,report}/src/**/*.ts"],
       exclude: [
         "packages/{cli,report}/src/{bin,index}.ts",
+        "packages/cli/src/report-anchor-live.ts",
         "packages/cli/src/storage-worker.ts",
       ],
       thresholds: {

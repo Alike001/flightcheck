@@ -1,6 +1,7 @@
 import type { CommandResult } from "@flightcheck/report";
 
 import {
+  ChainRunDataSchema,
   runChainPreflight,
   type ChainDependencies,
 } from "./chain.js";
@@ -12,6 +13,10 @@ import {
   resumeComputeVerification,
   type ComputeDependencies,
 } from "./compute.js";
+import {
+  resumeReportAnchor,
+  type AnchorDependencies,
+} from "./report-anchor.js";
 import {
   resumeStorageRoundTrip,
   runStoragePreparation,
@@ -44,6 +49,7 @@ export async function resumeFlightcheck(
   chainDependencies: Partial<ChainDependencies> = {},
   storageDependencies: Partial<StorageRoundTripDependencies> = {},
   computeDependencies: Partial<ComputeDependencies> = {},
+  anchorDependencies: Partial<AnchorDependencies> = {},
 ): Promise<CommandResult> {
   const preflight = await evaluatePreflight(input);
   if (!preflight.context) {
@@ -70,11 +76,23 @@ export async function resumeFlightcheck(
     return storage;
   }
 
-  return resumeComputeVerification(
+  const compute = await resumeComputeVerification(
     preflight.context,
     storageInput.runId,
     storageInput.allowedOperations,
     storageInput.maximumSpendWei,
     computeDependencies,
+  );
+  if (compute.status !== "SUCCESS" || compute.data.state !== "VERIFIED") {
+    return compute;
+  }
+
+  return resumeReportAnchor(
+    preflight.context,
+    storageInput.runId,
+    ChainRunDataSchema.parse(chain.data),
+    storageInput.allowedOperations,
+    storageInput.maximumSpendWei,
+    anchorDependencies,
   );
 }

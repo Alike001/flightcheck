@@ -177,5 +177,42 @@ SDK verification results are preserved without reinterpretation:
 The provider URL, RPC URL, private key, authorization header, prompt nonce, and
 raw SDK errors never enter the public result envelope.
 
+## Report finalization and mainnet anchor guard
+
+After Storage is `PASS` and Direct Compute is `VERIFIED`, `resume` builds one
+strict canonical report from the persisted evidence. The project commitment
+covers the validated config, sorted declared dependencies, lockfile identity and
+digest, and the Git commit when one is available. Flightcheck derives the
+outcome bitmap, computes the canonical report hash, signs the payload with the
+runner's EIP-712 key, verifies the recovered signer, and atomically writes
+`.flightcheck/runs/<runId>.report.json` with mode `0600`.
+
+The command then returns `REPORT_READY_FOR_PUBLICATION`. It does not quote or
+send the mainnet transaction until the report API has accepted that same hash
+and a matching public report URL has been recorded locally. Publication records
+are immutable. Retrying the exact same hash and URL is idempotent, while a
+different URL is rejected.
+
+Once publication exists, Flightcheck reads the configured registry bytecode,
+checks `isAnchored`, estimates `anchorReport(reportHash, outcomeBitmap)`, adds a
+20 percent gas-limit margin, and returns an expiring quote. The quote pins chain
+ID, registry, runner, report hash, bitmap, nonce, fee cap, gas limit, and maximum
+spend. Dispatch requires `mainnet_anchor` as the only allowed operation and a
+maximum spend at least equal to that exact quote.
+
+Before signing, Flightcheck rechecks the live chain, bytecode, duplicate marker,
+nonce, fee cap, and gas estimate. It saves `ANCHOR_DISPATCHING` before the RPC
+send and persists the transaction hash at the first observable point. A known
+hash is recovered and verified without another transaction. If dispatch may
+have occurred but no hash was saved, automatic retry stays blocked. Success
+requires one confirmed receipt with the exact registry, sender, report hash,
+runner, and outcome bitmap. EIP-1559 RPC normalization is accepted only when the
+observed hard fee cap equals the approved quote and the priority fee doesn't
+exceed it.
+
+The report API is the next implementation slice. Until it exists, a real run
+correctly stops at `REPORT_READY_FOR_PUBLICATION`, and no 0G mainnet anchor is
+sent.
+
 The future published command is `npx @alike001/flightcheck run --json`. The
 package has not been published yet, so use the local command above for now.
